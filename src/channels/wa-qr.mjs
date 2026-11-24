@@ -30,6 +30,20 @@ const EXT = { image: '.jpg', audio: '.ogg', video: '.mp4', document: '.bin', sti
 
 const num = (jid) => String(jid || '').split('@')[0].split(':')[0];
 
+// Как бот представляется WhatsApp. Историю чатов телефон отдаёт только «WhatsApp для компьютера» (Desktop).
+// WhatsApp время от времени перестаёт принимать какой-то из вариантов: в ноябре 2026 «Mac + Desktop» и «Windows + Desktop»
+// стали обрываться ещё до QR-кода (код 428), а «Ubuntu + Desktop» работает. Поэтому при таком обрыве пробуем следующий
+// вариант по списку. Вариант, с которым телефон привязан, запоминается рядом со входом и дальше не меняется.
+const BROWSERS_HISTORY = [Browsers.ubuntu('Desktop'), Browsers.windows('Desktop'), Browsers.macOS('Chrome')];
+const BROWSERS_PLAIN = [Browsers.macOS('Chrome'), Browsers.windows('Chrome')];
+let browserIdx = 0;
+const browserFile = () => path.join(paths.waAuth, 'browser.json');
+function pickBrowser(wantHistory) {
+  try { const b = JSON.parse(fs.readFileSync(browserFile(), 'utf8')); if (Array.isArray(b) && b.length === 3) return b; } catch {}
+  const list = wantHistory ? BROWSERS_HISTORY : BROWSERS_PLAIN;
+  return list[Math.min(browserIdx, list.length - 1)];
+}
+
 export async function start() {
   stopped = false;
   if (sock || starting) return;
@@ -45,9 +59,11 @@ export async function start() {
   // История чатов: при первом подключении WhatsApp присылает прошлую переписку — бот изучит по ней, как вы отвечаете.
   // Для этого бот представляется «WhatsApp для компьютера» (Desktop): только такому устройству телефон отдаёт историю.
   const wantHistory = config().study?.importHistory !== false;
+  const browser = pickBrowser(wantHistory);
+  let sawQr = false;
   const s = makeWASocket({
     auth, logger, ...(version ? { version } : {}),
-    browser: Browsers.macOS(wantHistory ? 'Desktop' : 'Chrome'),
+    browser,
     markOnlineOnConnect: false,           // не показывать клиентам «в сети», когда бот подключён
     syncFullHistory: wantHistory,
     shouldSyncHistoryMessage: () => wantHistory,
@@ -56,16 +72,25 @@ export async function start() {
   sock = s;
   s.ev.on('creds.update', saveCreds);
   s.ev.on('connection.update', async (u) => {
-    if (u.qr) { state = 'qr'; try { qrImage = await QRCode.toDataURL(u.qr, { margin: 1, width: 320 }); } catch {} }
+    if (u.qr) { sawQr = true; state = 'qr'; lastError = ''; try { qrImage = await QRCode.toDataURL(u.qr, { margin: 1, width: 320 }); } catch {} }
     if (u.connection === 'open') {
       state = 'connected'; qrImage = null; retry = 0; lastError = '';
       me = { id: num(s.user?.id), name: s.user?.name || '' };
+      try { if (!fs.existsSync(browserFile())) fs.writeFileSync(browserFile(), JSON.stringify(browser)); } catch {}
       log('WhatsApp (QR) подключён:', me.id);
     }
     if (u.connection === 'close') {
       const code = u.lastDisconnect?.error?.output?.statusCode;
-      lastError = u.lastDisconnect?.error?.message || '';
+      const msg = u.lastDisconnect?.error?.message || '';
+      if (msg && msg !== lastError) log(`WhatsApp (QR): соединение закрыто — ${msg}${code ? ` (код ${code})` : ''}`);
+      lastError = msg;
       if (sock === s) sock = null;
+      // WhatsApp не принял такой вариант «устройства» ещё до QR-кода — пробуем следующий
+      const list = wantHistory ? BROWSERS_HISTORY : BROWSERS_PLAIN;
+      if (code === DisconnectReason.connectionClosed && !sawQr && !auth.creds?.me && !fs.existsSync(browserFile()) && browserIdx < list.length - 1) {
+        browserIdx++; retry = 0;
+        log(`WhatsApp (QR): пробую представиться как ${list[browserIdx].slice(0, 2).join(' / ')}`);
+      }
       if (code === DisconnectReason.loggedOut) {
         log('WhatsApp (QR): вышли из аккаунта — нужен новый QR-код');
         state = 'logged_out'; me = null;
