@@ -29,7 +29,7 @@ const REPLY = { reply: 'Ассаляму алейкум, брат! 🤲', langua
 
 before(() => {
   loadConfig();
-  patchConfig({ behavior: { debounceSec: 0, humanDelay: false, studyRetrySec: 0.2 }, study: { months: 120 } });
+  patchConfig({ behavior: { botEnabled: true, debounceSec: 0, humanDelay: false, studyRetrySec: 0.2 }, study: { months: 120 } });
   db.openDb(paths.db);
   hub.onInbound(agent.handleInbound);
   hub.register('waqr', { send: async (chatId, text) => { sent.push({ chatId, text }); return { ok: true, extId: 's' + sent.length }; }, status: () => ({ state: 'connected' }) });

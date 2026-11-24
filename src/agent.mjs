@@ -239,7 +239,8 @@ function scheduleAnalyze(contactId, ms = 5 * 60000) {
 
 export function botActiveFor(c) {
   const cfg = config();
-  return cfg.behavior.botEnabled && c.mode !== 'owner' && !(c.paused_until > Date.now());
+  // проверочный чат в панели работает и при выключенном боте — чтобы проверять, не отвечая настоящим клиентам
+  return (cfg.behavior.botEnabled || c.channel === 'test') && c.mode !== 'owner' && !(c.paused_until > Date.now());
 }
 
 /** Подумать и ответить клиенту (или только разобрать переписку для аналитики). */

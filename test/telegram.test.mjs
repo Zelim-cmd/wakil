@@ -29,7 +29,7 @@ const REPLY = (o = {}) => ({ reply: 'Ответ бота', language: 'ru', clien
 
 before(async () => {
   loadConfig();
-  patchConfig({ behavior: { debounceSec: 0, humanDelay: false }, business: { ownerPhone: '' }, telegram: { token: 'TEST', bindCode: 'secret123' } });
+  patchConfig({ behavior: { botEnabled: true, debounceSec: 0, humanDelay: false }, business: { ownerPhone: '' }, telegram: { token: 'TEST', bindCode: 'secret123' } });
   db.openDb(paths.db);
   hub.onInbound(agent.handleInbound);
   hub.register('waqr', { send: async (chatId, text) => { toClient.push({ chatId, text }); return { ok: true, extId: 'w' + toClient.length }; }, status: () => ({ state: 'connected' }) });

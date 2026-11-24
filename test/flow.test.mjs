@@ -36,7 +36,7 @@ const base = (o = {}) => ({
 let servers;
 before(async () => {
   loadConfig();
-  patchConfig({ behavior: { debounceSec: 0, humanDelay: false }, business: { ownerPhone: '79990001122' }, panel: { port: 0, webhookPort: 0 } });
+  patchConfig({ behavior: { botEnabled: true, debounceSec: 0, humanDelay: false }, business: { ownerPhone: '79990001122' }, panel: { port: 0, webhookPort: 0 } });
   db.openDb(paths.db);
   ensureKnowledge();
   hub.onInbound(agent.handleInbound);
@@ -255,4 +255,17 @@ test('мелочи: разбор JSON, строгая схема, деление
   const parts = hub.splitText('а'.repeat(500) + '\n\n' + 'б'.repeat(700), 950);
   assert.equal(parts.length, 2);
   assert.ok(parts.every((p) => p.length <= 950));
+});
+
+test('проверочный чат отвечает, даже когда бот выключен для клиентов', async () => {
+  patchConfig({ behavior: { botEnabled: false } });
+  hub.register('test', { send: async (chatId, text) => { sent.push({ channel: 'test', chatId, text }); return { ok: true, extId: 't' + sent.length }; }, status: () => ({ state: 'connected' }) });
+  aiReply = base({ reply: 'Ответ в проверке' });
+  const n = sent.length;
+  hub.inbound({ channel: 'waqr', chatId: '79289990000@s.whatsapp.net', text: 'Клиент пишет', extId: 'off1', at: Date.now() });
+  hub.inbound({ channel: 'test', chatId: 'panel-test', text: 'Проверка', extId: 'off2', at: Date.now() });
+  await until(() => sent.length > n);
+  await sleep(200);
+  assert.deepEqual(sent.slice(n).map((s) => s.channel), ['test'], 'настоящему клиенту не ответил, в проверке — ответил');
+  patchConfig({ behavior: { botEnabled: true } });
 });

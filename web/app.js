@@ -156,9 +156,10 @@ PAGES.home = async () => {
     [o.telegramBound, 'Подключите Telegram-помощника: уведомления, ответы клиентам и управление ботом с телефона', '#connect'],
     [wa, 'Подключите WhatsApp — бот загрузит вашу прошлую переписку', '#connect'],
     [o.study?.last && !o.study.last.empty, o.study?.running ? `Бот изучает, как вы пишете клиентам… ${o.study.done}/${o.study.total}` : 'Бот изучает, как вы пишете клиентам, и пишет так же', '#learn'],
+    [o.botEnabled, 'Включите бота для клиентов (переключатель внизу слева), когда ответы в «Проверить бота» вам нравятся', '#test'],
     [ch.instagram?.state === 'connected', 'Подключите Instagram (по желанию)', '#connect'],
   ];
-  const allDone = steps.slice(0, 7).every((s) => s[0]);
+  const allDone = steps.slice(0, -1).every((s) => s[0]);
   const t = st.totals;
   main.innerHTML = `
     <div class="page-head"><div><h1>Ассаламу алейкум!</h1><p class="muted">ИИ: ${esc(o.ai.name)} · WhatsApp: ${chState(ch.waqr?.state === 'connected' ? ch.waqr : ch.wacloud)} · Instagram: ${chState(ch.instagram)}</p></div></div>
@@ -765,7 +766,7 @@ function hotelModal(h) {
 // ======================= ПРОВЕРИТЬ БОТА =======================
 PAGES.test = async () => {
   main.innerHTML = `
-    <div class="page-head"><div class="grow"><h1>Проверить бота</h1><p class="muted">Пишите как клиент. Бот ответит так же, как ответил бы в WhatsApp. Неудачный ответ — нажмите «✎ Исправить», и бот запомнит. В аналитику эти разговоры не попадают.</p></div>
+    <div class="page-head"><div class="grow"><h1>Проверить бота</h1><p class="muted">Пишите как клиент. Бот ответит так же, как ответил бы в WhatsApp. Неудачный ответ — нажмите «✎ Исправить», и бот запомнит. В аналитику эти разговоры не попадают. Работает, даже когда бот выключен для клиентов.</p></div>
       <button class="btn" id="tsReset">Начать заново</button></div>
     <div class="chat-view">
       <div class="card conv" style="height:calc(100vh - 160px);min-height:420px">
