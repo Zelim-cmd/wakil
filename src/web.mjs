@@ -21,6 +21,7 @@ import {
   dailyReview, teachHistory, clearTeachHistory,
 } from './learning.mjs';
 import { stats, analyst, exportCsv, EXPORT_NAMES } from './analytics.mjs';
+import { stageUpload, finishUpload, runStudy, studyStatus, saveProfile, deleteExample, fetchInstagramHistory } from './study.mjs';
 
 const WEB = path.join(ROOT, 'web');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ogg': 'audio/ogg', '.mp4': 'video/mp4' };
@@ -62,7 +63,7 @@ export function lanAddresses() {
 
 // ---------- маршруты API ----------
 const routes = [];
-const route = (method, pattern, fn) => routes.push({ method, re: new RegExp('^' + pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)') + '$'), fn });
+const route = (method, pattern, fn, opts = {}) => routes.push({ method, re: new RegExp('^' + pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)') + '$'), fn, ...opts });
 
 route('GET', '/api/overview', () => {
   const cfg = config();
@@ -78,7 +79,8 @@ route('GET', '/api/overview', () => {
       proposals: get("SELECT COUNT(*) n FROM lessons WHERE status = 'proposed'").n,
       hotels: get('SELECT COUNT(*) n FROM hotels WHERE active = 1').n,
       lessons: get("SELECT COUNT(*) n FROM lessons WHERE status = 'active'").n,
-      contacts: get("SELECT COUNT(*) n FROM contacts WHERE channel != 'test'").n,
+      contacts: get("SELECT COUNT(*) n FROM contacts WHERE channel != 'test' AND imported = 0").n,
+      archive: get('SELECT COUNT(*) n FROM contacts WHERE imported = 1').n,
     },
     events: all("SELECT * FROM events WHERE type IN ('notify','ai_limit','send_error') ORDER BY id DESC LIMIT 40").map((e) => ({ ...e, data: JSON.parse(e.data || '{}') })),
     lastReview: kvGet('last_review', null),
@@ -86,13 +88,14 @@ route('GET', '/api/overview', () => {
     ownerPhoneSet: String(cfg.business.ownerPhone || '').replace(/\D/g, '').length >= 7,
     tested: !!get("SELECT id FROM contacts WHERE channel = 'test' LIMIT 1") || !!get("SELECT id FROM ai_calls WHERE purpose = 'reply' AND ok = 1 LIMIT 1"),
     currency: cfg.business.currency,
+    study: studyStatus(),
     knowledgeFilled: !listKnowledge().every((f) => /\[[^\]]+\]/.test(f.text)),
   };
 });
 
 route('GET', '/api/contacts', (q) => {
-  const where = ["c.channel != 'test'"]; const params = [];
   const f = q.get('filter') || '';
+  const where = ["c.channel != 'test'", f === 'archive' ? 'c.imported = 1' : 'c.imported = 0']; const params = [];
   if (f === 'attention') where.push('c.attention = 1');
   if (f === 'owner') where.push("(c.mode = 'owner' OR c.paused_until > ?)"), params.push(Date.now());
   if (STAGES.includes(f)) where.push('c.stage = ?'), params.push(f);
@@ -194,6 +197,26 @@ route('POST', '/api/questions/:id', (q, p, b) => {
 route('POST', '/api/teach', async (q, p, b) => ownerChat(String(b.text || ''), { via: 'panel' }));
 route('POST', '/api/teach/clear', () => { clearTeachHistory(); return { ok: true }; });
 route('POST', '/api/review', async (q, p, b) => dailyReview({ hours: Number(b.hours) || 24, force: true }));
+
+// изучение прошлой переписки
+route('GET', '/api/study', () => ({ ...studyStatus(), profile: kvGet('style_profile', null), examples: kvGet('style_examples', []), ownerName: kvGet('export_owner_name', '') }));
+route('POST', '/api/study/upload', (q, p, raw) => {
+  const name = String(q.get('name') || 'file.txt');
+  const batch = String(q.get('batch') || 'b');
+  try { return { ok: true, ...stageUpload(batch, name, raw) }; } catch (e) { throw httpError(400, `${name}: ${e.message}`); }
+}, { raw: true, limit: 80 * 1024 * 1024 });
+route('POST', '/api/study/import', (q, p, b) => finishUpload(String(b.batch || 'b'), String(b.ownerName || '')));
+route('POST', '/api/study/run', (q, p, b) => {
+  runStudy({ mode: b.mode === 'update' ? 'update' : 'full' }).catch((e) => log('Изучение:', e));
+  return { ok: true };
+});
+route('POST', '/api/study/profile', (q, p, b) => { saveProfile(b.text); return { ok: true }; });
+route('POST', '/api/study/examples/:i/delete', (q, p) => { deleteExample(Number(p.i)); return { ok: true }; });
+route('POST', '/api/study/instagram', async () => {
+  const r = await fetchInstagramHistory();
+  if (!r.ok) throw httpError(400, r.error);
+  return r;
+});
 
 // брони и оплаты
 const BOOKING_FIELDS = ['contact_id', 'hotel', 'city', 'check_in', 'check_out', 'nights', 'guests', 'rooms', 'room_type', 'total', 'currency', 'commission', 'status', 'note'];
@@ -314,7 +337,10 @@ async function handlePanel(req, res) {
       if (!m) continue;
       try {
         let body = {};
-        if (req.method === 'POST') { const raw = await readBody(req); body = raw.length ? JSON.parse(raw.toString()) : {}; }
+        if (req.method === 'POST') {
+          const raw = await readBody(req, r.limit || 3 * 1024 * 1024);
+          body = r.raw ? raw : raw.length ? JSON.parse(raw.toString()) : {};
+        }
         const out = await r.fn(url.searchParams, m.groups || {}, body, res);
         if (out !== undefined) send(res, 200, out);
       } catch (e) {

@@ -8,10 +8,11 @@ import pino from 'pino';
 import QRCode from 'qrcode';
 import makeWASocket, {
   useMultiFileAuthState, DisconnectReason, downloadMediaMessage, Browsers, fetchLatestBaileysVersion,
-  normalizeMessageContent, getContentType, isJidGroup, isJidBroadcast, isJidNewsletter, isJidStatusBroadcast, isPnUser,
+  normalizeMessageContent, getContentType, isJidGroup, isJidBroadcast, isJidNewsletter, isJidStatusBroadcast, isPnUser, isLidUser,
 } from 'baileys';
 import { paths, config, log } from '../config.mjs';
 import * as hub from './hub.mjs';
+import { importChats, scheduleAutoStudy } from '../study.mjs';
 
 const logger = pino({ level: 'silent' });
 let sock = null;
@@ -41,12 +42,15 @@ export async function start() {
     try { ({ version } = await fetchLatestBaileysVersion()); } catch {}
   } finally { starting = false; }
   if (stopped || sock) return;
+  // История чатов: при первом подключении WhatsApp присылает прошлую переписку — бот изучит по ней, как вы отвечаете.
+  // Для этого бот представляется «WhatsApp для компьютера» (Desktop): только такому устройству телефон отдаёт историю.
+  const wantHistory = config().study?.importHistory !== false;
   const s = makeWASocket({
     auth, logger, ...(version ? { version } : {}),
-    browser: Browsers.macOS('Chrome'),
+    browser: Browsers.macOS(wantHistory ? 'Desktop' : 'Chrome'),
     markOnlineOnConnect: false,           // не показывать клиентам «в сети», когда бот подключён
-    syncFullHistory: false,
-    shouldSyncHistoryMessage: () => false, // старую переписку не тянем — только новые сообщения
+    syncFullHistory: wantHistory,
+    shouldSyncHistoryMessage: () => wantHistory,
     generateHighQualityLinkPreview: false,
   });
   sock = s;
@@ -78,6 +82,56 @@ export async function start() {
   s.ev.on('messages.upsert', ({ messages, type }) => {
     for (const m of messages) onMessage(s, m, type).catch((e) => log('WhatsApp (QR) входящее:', e));
   });
+  s.ev.on('messaging-history.set', (h) => onHistory(s, h).catch((e) => log('WhatsApp (QR) история:', e)));
+  s.ev.on('messaging-history.status', (st) => { if (st.status === 'complete') scheduleAutoStudy(20000); });
+}
+
+// ---------- прошлая переписка (приходит частями при первом подключении) ----------
+const lidToPn = new Map();
+const toUserJid = (j) => { const v = String(j || ''); if (!v) return ''; const [u, d] = v.split('@'); return `${u.split(':')[0]}@${d || 's.whatsapp.net'}`; };
+let historyStats = { chats: 0, messages: 0 };
+
+export async function onHistory(s, { chats = [], contacts = [], messages = [], lidPnMappings = [] }) {
+  for (const m of lidPnMappings || []) if (m?.lid && m?.pn) lidToPn.set(toUserJid(m.lid), toUserJid(m.pn));
+  for (const c of contacts || []) { if (c?.lid && c?.phoneNumber) lidToPn.set(toUserJid(c.lid), toUserJid(c.phoneNumber)); }
+  const names = new Map();
+  for (const c of contacts || []) if (c?.id) names.set(toUserJid(c.id), c.name || c.notify || c.verifiedName || '');
+  for (const c of chats || []) if (c?.id && c.name) names.set(toUserJid(c.id), c.name);
+  const byChat = new Map();
+  for (const m of messages || []) {
+    const key = m.key || {};
+    let jid = key.remoteJid;
+    if (!jid || !m.message || !(isPnUser(jid) || isLidUser(jid))) continue; // только личные чаты, без групп и рассылок
+    const ex = extract(m.message);
+    if (!ex || !ex.text) continue;
+    jid = toUserJid(jid);
+    let pn = isPnUser(jid) ? jid : lidToPn.get(jid) || (isPnUser(key.remoteJidAlt || '') ? toUserJid(key.remoteJidAlt) : null);
+    if (!pn && isLidUser(jid)) { try { const r = await s.signalRepository?.lidMapping?.getPNForLID(jid); if (r) pn = toUserJid(r); } catch {} }
+    const chatId = pn || jid;
+    const entry = byChat.get(chatId) || { channel: 'waqr', chatId, phone: pn ? num(pn) : '', name: names.get(chatId) || names.get(jid) || '', messages: [] };
+    if (!entry.name && !key.fromMe && m.pushName) entry.name = m.pushName;
+    entry.messages.push({ fromOwner: !!key.fromMe, text: ex.text, at: Number(m.messageTimestamp?.toString?.() ?? m.messageTimestamp ?? 0) * 1000, extId: key.id });
+    byChat.set(chatId, entry);
+  }
+  if (!byChat.size) return;
+  const r = importChats([...byChat.values()], { source: 'whatsapp' });
+  historyStats = { chats: historyStats.chats + r.chats, messages: historyStats.messages + r.messages };
+  if (r.messages) log(`WhatsApp (QR): загружена прошлая переписка — чатов ${r.chats}, сообщений ${r.messages}`);
+}
+
+/** Текст сообщения и вид вложения — общее для новых сообщений и истории. */
+function extract(message) {
+  const content = normalizeMessageContent(message);
+  const ctype = getContentType(content);
+  if (!ctype || SKIP_TYPES.has(ctype)) return null;
+  const c = content[ctype] || {};
+  let text = content.conversation || content.extendedTextMessage?.text || c.caption || c.text
+    || content.buttonsResponseMessage?.selectedDisplayText || content.listResponseMessage?.title || content.templateButtonReplyMessage?.selectedDisplayText || '';
+  if (ctype === 'locationMessage' || ctype === 'liveLocationMessage') text = `[место на карте: ${c.degreesLatitude}, ${c.degreesLongitude}${c.name ? ', ' + c.name : ''}]`;
+  if (ctype === 'contactMessage') text = `[контакт: ${c.displayName || ''}]`;
+  const kind = KIND[ctype] || '';
+  if (!text && kind) text = `[${({ image: 'фото', audio: 'голосовое', video: 'видео', document: 'файл', sticker: 'стикер' })[kind]}]`;
+  return { text, kind, ctype, c };
 }
 
 async function onMessage(s, m, type) {
@@ -88,16 +142,11 @@ async function onMessage(s, m, type) {
   const at = Number(m.messageTimestamp?.toString?.() ?? m.messageTimestamp ?? 0) * 1000 || Date.now();
   // «append» — это досинхронизация; берём из неё только свежее (что пришло, пока компьютер спал)
   if (type !== 'notify' && Date.now() - at > (config().behavior.answerOldHours || 12) * 3600000) return;
-  const content = normalizeMessageContent(m.message);
-  const ctype = getContentType(content);
-  if (!ctype || SKIP_TYPES.has(ctype)) return;
-  const c = content[ctype] || {};
-  let text = content.conversation || content.extendedTextMessage?.text || c.caption || c.text
-    || content.buttonsResponseMessage?.selectedDisplayText || content.listResponseMessage?.title || content.templateButtonReplyMessage?.selectedDisplayText || '';
-  if (ctype === 'locationMessage' || ctype === 'liveLocationMessage') text = `[место на карте: ${c.degreesLatitude}, ${c.degreesLongitude}${c.name ? ', ' + c.name : ''}]`;
-  if (ctype === 'contactMessage') text = `[контакт: ${c.displayName || ''}]`;
+  const ex = extract(m.message);
+  if (!ex) return;
+  const { ctype, c, kind } = ex;
+  let text = ex.kind && /^\[(фото|голосовое|видео|файл|стикер)\]$/.test(ex.text) ? '' : ex.text;
   let media = null;
-  const kind = KIND[ctype];
   if (kind) {
     media = { kind, mime: c.mimetype || '' };
     // фото (чеки, паспорта) и голосовые сохраняем, остальное — только отметка
@@ -148,5 +197,5 @@ export const adapter = {
     if (sock && state === 'connected') await sock.sendPresenceUpdate('composing', chatId);
   },
   async sendToPhone(phone, text) { return adapter.send(`${phone}@s.whatsapp.net`, text); },
-  status() { return { state, qr: state === 'qr' ? qrImage : null, me, error: lastError, hasSession: fs.existsSync(path.join(paths.waAuth, 'creds.json')) }; },
+  status() { return { state, qr: state === 'qr' ? qrImage : null, me, error: lastError, hasSession: fs.existsSync(path.join(paths.waAuth, 'creds.json')), history: historyStats }; },
 };

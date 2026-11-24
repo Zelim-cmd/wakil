@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   attention INTEGER DEFAULT 0, attention_reason TEXT DEFAULT '',
   facts TEXT DEFAULT '{}', summary TEXT DEFAULT '', notes TEXT DEFAULT '', lost_reason TEXT DEFAULT '',
   fallback_at INTEGER DEFAULT 0,
+  imported INTEGER DEFAULT 0,         -- 1 = чат из прошлой переписки (архив): бот на него не отвечал, в аналитику не входит
   UNIQUE(channel, chat_id)
 );
 CREATE TABLE IF NOT EXISTS messages (
@@ -98,7 +99,12 @@ export function openDb(file) {
   db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF; PRAGMA busy_timeout = 5000;');
   db.exec(SCHEMA);
+  // базы, созданные прошлыми версиями: добавляем новые столбцы
+  ensureColumn('contacts', 'imported', 'INTEGER DEFAULT 0');
   return db;
+}
+function ensureColumn(table, col, def) {
+  if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
 }
 export function closeDb() { if (db) { db.close(); db = null; } }
 

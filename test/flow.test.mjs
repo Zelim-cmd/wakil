@@ -46,7 +46,7 @@ before(async () => {
   servers = startServers();
   await servers.ready;
 });
-after(() => { servers?.panel.close(); servers?.hooks.close(); db.closeDb(); fs.rmSync(DIR, { recursive: true, force: true }); setTimeout(() => process.exit(0), 50); });
+after(async () => { await sleep(300); servers?.panel.close(); servers?.hooks.close(); db.closeDb(); fs.rmSync(DIR, { recursive: true, force: true }); setTimeout(() => process.exit(0), 50); });
 
 test('клиент пишет → бот отвечает, запоминает запрос и интерес к отелю', async () => {
   saveHotel({ name: 'Swissôtel Makkah', city: 'Мекка', stars: 5, prices: '900 SAR', prices_until: '2099-01-01' });
@@ -234,6 +234,16 @@ test('аналитика и выгрузка', async () => {
   const csv = exportCsv('bookings');
   assert.ok(csv.startsWith('﻿'));
   assert.match(csv, /Swissôtel Makkah/);
+});
+
+test('ответ из нескольких сообщений подряд (как пишет владелец) уходит отдельными сообщениями', async () => {
+  aiReply = base({ reply: 'Ва алейкум ассалам 🤍\n---\nНа какие даты?' });
+  const n = sent.length;
+  hub.inbound({ channel: 'waqr', chatId: '79281239999@s.whatsapp.net', phone: '79281239999', text: 'Салам', extId: 'split1', at: Date.now() });
+  await until(() => sent.length >= n + 2);
+  assert.deepEqual(sent.slice(n).map((s) => s.text), ['Ва алейкум ассалам 🤍', 'На какие даты?']);
+  const c = db.get("SELECT id FROM contacts WHERE chat_id = '79281239999@s.whatsapp.net'");
+  assert.equal(db.get("SELECT COUNT(*) n FROM messages WHERE contact_id = ? AND author = 'bot'", c.id).n, 2);
 });
 
 test('мелочи: разбор JSON, строгая схема, деление длинного текста', () => {

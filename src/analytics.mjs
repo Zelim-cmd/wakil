@@ -6,7 +6,7 @@ import { STAGES, STAGE_LABEL, CHANNEL_LABEL } from './store.mjs';
 import { CITY_LABEL } from './knowledge.mjs';
 
 const DAY = 86400000;
-const NOT_TEST = "channel != 'test'";
+const NOT_TEST = "channel != 'test' AND imported = 0";
 
 function tzParts(ms) {
   const tz = config().business.timezone || 'Asia/Riyadh';
@@ -100,7 +100,7 @@ export function stats(days = 30) {
 
   // отели: интерес и брони
   const interest = {};
-  for (const r of all('SELECT hotel, COUNT(DISTINCT contact_id) n FROM interests WHERE at >= ? AND contact_id IN (SELECT id FROM contacts WHERE channel != \'test\') GROUP BY hotel', since)) interest[r.hotel] = r.n;
+  for (const r of all('SELECT hotel, COUNT(DISTINCT contact_id) n FROM interests WHERE at >= ? AND contact_id IN (SELECT id FROM contacts WHERE channel != \'test\' AND imported = 0) GROUP BY hotel', since)) interest[r.hotel] = r.n;
   const hotelBook = {}, hotelRev = {};
   for (const b of bookings) { const h = b.hotel || '—'; hotelBook[h] = (hotelBook[h] || 0) + 1; hotelRev[h] = (hotelRev[h] || 0) + (Number(b.total) || 0); }
   const hotelNames = [...new Set([...Object.keys(interest), ...Object.keys(hotelBook)])];
@@ -108,7 +108,7 @@ export function stats(days = 30) {
     .sort((a, b) => b.bookings - a.bookings || b.interest - a.interest).slice(0, 20);
 
   // заявки: город, месяцы поездок, группы, бюджеты
-  const reqs = all("SELECT r.* FROM requests r JOIN contacts c ON c.id = r.contact_id WHERE c.channel != 'test' AND r.updated_at >= ?", since);
+  const reqs = all("SELECT r.* FROM requests r JOIN contacts c ON c.id = r.contact_id WHERE c.channel != 'test' AND c.imported = 0 AND r.updated_at >= ?", since);
   const cities = {}; for (const r of reqs) if (r.city) { const k = r.city === 'both' ? 'Мекка и Медина' : CITY_LABEL[r.city] || r.city; cities[k] = (cities[k] || 0) + 1; }
   const months = {}; for (const r of reqs) if (r.check_in) { const k = r.check_in.slice(0, 7); months[k] = (months[k] || 0) + 1; }
   const tripTypes = {}; for (const r of reqs) if (r.trip_type) { const k = { umrah: 'Умра', hajj: 'Хадж', other: 'Другое' }[r.trip_type] || r.trip_type; tripTypes[k] = (tripTypes[k] || 0) + 1; }
@@ -217,7 +217,7 @@ const EXPORTS = {
   clients: `SELECT c.id AS "№", c.channel AS "Канал", c.name AS "Имя", c.phone AS "Телефон", c.username AS "Ник", c.lang AS "Язык",
       datetime(c.created_at/1000,'unixepoch') AS "Первое сообщение", datetime(c.last_at/1000,'unixepoch') AS "Последнее",
       c.stage AS "Стадия", c.lost_reason AS "Причина отказа", c.summary AS "Кратко", c.notes AS "Заметки"
-    FROM contacts c WHERE c.channel != 'test' ORDER BY c.id`,
+    FROM contacts c WHERE c.channel != 'test' AND c.imported = 0 ORDER BY c.id`,
   requests: `SELECT r.id AS "№", r.contact_id AS "Клиент №", c.name AS "Имя", r.status AS "Статус", r.city AS "Город", r.hotels AS "Отели",
       r.check_in AS "Заезд", r.check_out AS "Выезд", r.nights AS "Ночей", r.guests AS "Гостей", r.rooms AS "Номеров", r.room_type AS "Тип номера",
       r.meals AS "Питание", r.budget AS "Бюджет", r.currency AS "Валюта", r.trip_type AS "Поездка", r.notes AS "Пожелания",

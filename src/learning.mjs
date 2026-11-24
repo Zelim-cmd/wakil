@@ -156,7 +156,7 @@ const REVIEW_SCHEMA = {
 
 export async function dailyReview({ hours = 24, force = false } = {}) {
   const since = Date.now() - hours * 3600000;
-  const contacts = all("SELECT * FROM contacts WHERE last_at > ? AND channel != 'test' ORDER BY last_at DESC LIMIT 60", since);
+  const contacts = all("SELECT * FROM contacts WHERE last_at > ? AND channel != 'test' AND imported = 0 ORDER BY last_at DESC LIMIT 60", since);
   if (!contacts.length && !force) return { ok: true, skipped: true, report: 'За день переписки не было.' };
   let budget = 70000;
   const blocks = [];

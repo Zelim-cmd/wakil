@@ -16,6 +16,7 @@ const hub = await import('./channels/hub.mjs');
 const { handleInbound } = await import('./agent.mjs');
 const { startServers } = await import('./web.mjs');
 const { dailyReview } = await import('./learning.mjs');
+const { weeklyRestudy } = await import('./study.mjs');
 const { summaryText } = await import('./analytics.mjs');
 const { notifyOwner } = await import('./notify.mjs');
 const { waCloudAdapter, instagramAdapter, refreshInstagramToken } = await import('./channels/meta.mjs');
@@ -81,6 +82,8 @@ async function tick() {
       log('Ежедневный разбор…');
       const r = await dailyReview();
       log('Разбор:', r.ok ? (r.skipped ? 'переписки не было' : `предложено уроков: ${r.proposals}`) : r.message);
+      // раз в неделю — доизучить, как владелец отвечал сам, и уточнить его стиль
+      await weeklyRestudy();
     }
     if (sch.weeklyReport && t.weekday === 'Mon' && t.hour === 9 && kvGet('weekly_day') !== t.day) {
       kvSet('weekly_day', t.day);

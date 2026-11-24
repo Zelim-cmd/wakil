@@ -40,6 +40,7 @@ export function defaults() {
       humanDelay: true,         // «печатает…» и небольшая пауза перед ответом
       fallbackText: 'Спасибо за сообщение! Менеджер ответит вам в ближайшее время.',
       autoApproveLessons: false,// уроки из ежедневного разбора применять без одобрения владельца
+      waitForStudy: true,       // пока бот изучает переписку владельца — не отвечать клиентам (не дольше 30 минут)
       style: 'Вежливо, тепло и коротко, как опытный менеджер. Без канцелярита. Уважительно к паломникам.',
     },
     ai: {
@@ -61,6 +62,7 @@ export function defaults() {
     notify: { whatsappOwner: true, telegramToken: '', telegramChatId: '' },
     panel: { port: 8790, webhookPort: 8791, allowLan: false, password: '', preventSleep: true, publicUrl: '', autoTunnel: true },
     schedule: { reviewHour: 23, weeklyReport: true },
+    study: { months: 12, maxChars: 300000, importHistory: true, weekly: true },
   };
 }
 

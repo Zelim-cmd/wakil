@@ -71,7 +71,7 @@ async function busy(btn, fn) {
 const getPath = (o, p) => p.split('.').reduce((a, k) => (a == null ? a : a[k]), o);
 function setPath(o, p, v) { const ks = p.split('.'); let a = o; for (const k of ks.slice(0, -1)) a = a[k] ||= {}; a[ks[ks.length - 1]] = v; }
 
-const CH = { waqr: '🟢 WhatsApp', wacloud: '🟢 WhatsApp', instagram: '🟣 Instagram', test: '🧪 Проверка' };
+const CH = { waqr: '🟢 WhatsApp', wacloud: '🟢 WhatsApp', instagram: '🟣 Instagram', test: '🧪 Проверка', import: '📚 Архив' };
 const STAGE = { new: 'Новый', consulting: 'Консультация', offer: 'Предложены варианты', deciding: 'Думает', booking: 'Оформление', paid: 'Оплатил', lost: 'Отказ' };
 const STAGE_TAG = { new: 'blue', consulting: '', offer: 'gold', deciding: 'gold', booking: 'green', paid: 'green', lost: 'red' };
 const CITY = { makkah: 'Мекка', madinah: 'Медина', both: 'Мекка и Медина', other: 'Другое' };
@@ -154,10 +154,11 @@ PAGES.home = async () => {
     [o.counts.hotels > 0, 'Добавьте отели и цены (можно просто вставить прайс в «Обучение»)', '#knowledge'],
     [o.tested, 'Поговорите с ботом как клиент и поправьте ответы', '#test'],
     [o.ownerPhoneSet, 'Укажите свой личный номер — туда придут уведомления', '#settings'],
-    [wa, 'Подключите WhatsApp', '#connect'],
+    [wa, 'Подключите WhatsApp — бот загрузит вашу прошлую переписку', '#connect'],
+    [o.study?.last && !o.study.last.empty, o.study?.running ? `Бот изучает, как вы пишете клиентам… ${o.study.done}/${o.study.total}` : 'Бот изучает, как вы пишете клиентам, и пишет так же', '#learn'],
     [ch.instagram?.state === 'connected', 'Подключите Instagram (по желанию)', '#connect'],
   ];
-  const allDone = steps.slice(0, 6).every((s) => s[0]);
+  const allDone = steps.slice(0, 7).every((s) => s[0]);
   const t = st.totals;
   main.innerHTML = `
     <div class="page-head"><div><h1>Ассаламу алейкум!</h1><p class="muted">ИИ: ${esc(o.ai.name)} · WhatsApp: ${chState(ch.waqr?.state === 'connected' ? ch.waqr : ch.wacloud)} · Instagram: ${chState(ch.instagram)}</p></div></div>
@@ -204,7 +205,7 @@ PAGES.chats = async (id) => {
         <div class="filters">
           <input id="chatSearch" placeholder="Поиск: имя, телефон, отель…" value="${esc(chatSearch)}">
           <select id="chatFilter">
-            <option value="">Все клиенты</option><option value="attention">🔔 Ждут вас</option><option value="owner">✋ Ведёте сами</option>
+            <option value="">Все клиенты</option><option value="attention">🔔 Ждут вас</option><option value="owner">✋ Ведёте сами</option><option value="archive">📚 Архив — прошлая переписка</option>
             ${Object.entries(STAGE).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}
           </select>
         </div>
@@ -524,13 +525,116 @@ PAGES.stats = async () => {
 };
 
 // ======================= ОБУЧЕНИЕ =======================
-const SRC = { owner: 'вы', correction: 'исправление', review: 'разбор дня', teach: 'из чата' };
+const SRC = { owner: 'вы', correction: 'исправление', review: 'разбор дня', teach: 'из чата', history: 'из переписки' };
+
+// ---------- изучение прошлой переписки ----------
+function studyStatusHtml(st) {
+  if (st.running) {
+    const pct = st.total ? Math.round((st.done / st.total) * 100) : 5;
+    return `<p><span class="spin"></span> ${esc(st.phase || 'Изучаю')}… ${st.total ? `${st.done} из ${st.total}` : ''}</p>
+      <div class="bar" style="grid-template-columns:1fr"><span class="track"><span class="fill" style="width:${pct}%"></span></span></div>
+      <p class="muted small">Можно закрыть панель — бот доизучит сам и пришлёт вам итог. ${OV?.botEnabled ? 'Пока идёт изучение, клиентам он не отвечает (не дольше 30 минут).' : ''}</p>`;
+  }
+  const l = st.last;
+  return `${st.error ? `<p class="err">Не получилось: ${esc(st.error)}</p>` : ''}
+    ${l ? `<p><b>${l.empty ? 'Изучать пока нечего.' : `Изучено ${fTime(l.at)}: чатов ${l.chats}, ваших ответов ${l.messages}.`}</b></p><div class="pre">${esc(l.report || '')}</div>`
+      : '<p>Бот ещё не изучал вашу переписку.</p>'}`;
+}
+async function uploadExports(files) {
+  const batch = Math.random().toString(36).slice(2);
+  let ok = 0;
+  for (const f of files) {
+    if (f.size > 80 * 1024 * 1024) { toast(`${f.name}: слишком большой файл. Экспортируйте чат «Без медиафайлов».`, true); continue; }
+    toast(`Загружаю ${f.name}…`);
+    const r = await fetch(`/api/study/upload?batch=${batch}&name=${encodeURIComponent(f.name)}`, { method: 'POST', headers: { 'x-wakil': '1' }, body: f });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(j.error || 'Не загрузилось', true); continue; }
+    ok++;
+  }
+  if (ok) await finishImport(batch, '');
+}
+async function finishImport(batch, ownerName) {
+  const r = await api('/api/study/import', { batch, ownerName });
+  if (r.needOwner) {
+    modal(`<h2>Какое из имён — ваше?</h2><p class="muted">В загруженных чатах несколько авторов. Выберите себя, чтобы бот учился именно на ваших ответах.</p>
+      <div class="row" style="flex-direction:column;align-items:stretch">${r.authors.map((a) => `<button class="btn" data-owner="${esc(a)}">${esc(a)}</button>`).join('')}</div>`, () => {
+      $$('[data-owner]').forEach((b) => (b.onclick = () => { closeModal(); finishImport(batch, b.dataset.owner); }));
+    });
+    return;
+  }
+  if (!r.ok) return toast(r.error, true);
+  const old = r.tooOld ? ` Пропущено как слишком старые (старше ${r.months} мес.): ${r.tooOld} — срок меняется в «Настройках».` : '';
+  if (!r.chats) return toast((r.tooOld ? 'Новых чатов не нашлось.' : 'Новых чатов не нашлось — возможно, они уже загружены.') + old, true);
+  toast(`Загружено чатов: ${r.chats}, сообщений: ${r.messages}.${old} Начинаю изучать.`);
+  await api('/api/study/run', { mode: 'full' });
+  route();
+}
+function studyCardHtml(st, igOn, waOn) {
+  const h = st.history;
+  return `<div class="card" id="studyCard" style="margin-bottom:14px">
+    <h2>📚 Как вы пишете клиентам — бот пишет так же</h2>
+    <div id="stStatus">${studyStatusHtml(st)}</div>
+    <p class="muted small" style="margin-bottom:4px">Откуда бот берёт вашу переписку:</p>
+    <ul class="small" style="margin-top:0">
+      <li><b>WhatsApp по QR-коду</b> — при подключении сам загружает ваши чаты за последние ${esc(String(st.months || 12))} мес.${!h && waOn ? ' <span class="muted">(WhatsApp был подключён раньше этой функции — чтобы загрузить историю, отвяжите и подключите его заново в «Подключениях».)</span>' : ''}</li>
+      <li><b>Экспорт чатов</b> WhatsApp (.txt или .zip) или выгрузка Instagram (.json) — загрузите кнопкой ниже. Подходит и для официального WhatsApp.</li>
+    </ul>
+    ${h ? `<p class="small">Всего загружено прошлой переписки: чатов ${h.chats}, сообщений ${h.messages}. Её можно посмотреть в «Диалогах» → «Архив».</p>` : ''}
+    <div class="row">
+      <label class="btn">📎 Загрузить экспорт чатов<input type="file" id="stFiles" multiple accept=".txt,.zip,.json" hidden></label>
+      ${igOn ? '<button class="btn" id="stIg">Загрузить переписку из Instagram</button>' : ''}
+      <button class="btn ${st.last ? '' : 'primary'}" id="stRun" ${st.running ? 'disabled' : ''}>${st.last && !st.last.empty ? 'Изучить заново' : 'Изучить сейчас'}</button>
+    </div>
+    <details style="margin-top:8px"><summary class="muted small">Как сделать экспорт чата в WhatsApp</summary>
+      <ul class="small"><li><b>iPhone:</b> откройте чат → нажмите на имя вверху → «Экспорт чата» → «Без медиафайлов» → сохраните в «Файлы» или отправьте себе.</li>
+      <li><b>Android:</b> откройте чат → ⋮ → «Ещё» → «Экспорт чата» → «Без медиафайлов».</li>
+      <li>Сделайте так для 10–30 чатов с клиентами, где вы отвечали сами, — и загрузите все файлы разом.</li>
+      <li><b>Instagram:</b> Настройки → «Ваши действия» → «Скачать информацию» → «Сообщения», формат <b>JSON</b>. Загрузите файлы <code>message_1.json</code> или весь архив .zip.</li></ul>
+    </details>
+  </div>`;
+}
+function styleCardHtml(d) {
+  const p = d.profile;
+  return `<div class="card" style="margin-top:14px"><h2>Ваш стиль — так бот пишет от вашего имени</h2>
+    ${p?.text ? `<p class="muted small">Бот составил это по вашей переписке${p.edited ? ' (вы правили вручную)' : ''}. Поправьте, если что-то не так, — это главная инструкция о том, как ему писать.</p>
+      <textarea id="stProfile" rows="14">${esc(p.text)}</textarea><div class="row" style="margin-top:8px"><button class="btn primary" id="stSave">Сохранить</button></div>`
+      : '<p class="muted">Появится после изучения переписки.</p>'}
+    ${d.examples.length ? `<details style="margin-top:12px"><summary><b>Ваши настоящие ответы, по которым бот учится (${d.examples.length})</b></summary>
+      ${d.examples.map((e, i) => `<div class="lesson"><div class="txt"><small class="muted">${esc(e.situation)}</small><br><b>Клиент:</b> ${esc(e.client)}<br><b>Вы:</b> ${esc(e.owner)}</div><button class="btn sm danger" data-exdel="${i}" title="Не брать за образец">✕</button></div>`).join('')}
+    </details>` : ''}
+  </div>`;
+}
+function bindStudy(st) {
+  $('#stFiles').onchange = (e) => { const files = [...e.target.files]; e.target.value = ''; if (files.length) uploadExports(files).catch((err) => toast(err.message, true)); };
+  $('#stRun').onclick = async () => {
+    if (st.last && !st.last.empty && !confirm('Изучить всю переписку заново? Профиль стиля будет составлен заново (ваши ручные правки в нём заменятся).')) return;
+    await api('/api/study/run', { mode: 'full' }); toast('Начал изучать'); route();
+  };
+  $('#stIg') && ($('#stIg').onclick = () => busy($('#stIg'), async () => {
+    const r = await api('/api/study/instagram', {});
+    if (!r.chats) return toast('Новых диалогов не нашлось');
+    toast(`Загружено диалогов: ${r.chats}. Начинаю изучать.`); await api('/api/study/run', { mode: 'full' }); route();
+  }));
+  $('#stSave') && ($('#stSave').onclick = async () => { await api('/api/study/profile', { text: $('#stProfile').value }); toast('Сохранено — бот уже пишет по-новому'); });
+  $$('[data-exdel]').forEach((b) => (b.onclick = async () => { await api(`/api/study/examples/${b.dataset.exdel}/delete`, {}); route(); }));
+  if (st.running) {
+    every(3000, async () => {
+      const s = await api('/api/study');
+      if (!s.running) return route();
+      const el = $('#stStatus'); if (el) el.innerHTML = studyStatusHtml(s);
+    });
+  }
+}
 PAGES.learn = async () => {
-  const d = await api('/api/learning');
+  const [d, st] = await Promise.all([api('/api/learning'), api('/api/study')]);
+  await refreshOverview();
+  const igOn = OV?.channels?.instagram?.state === 'connected';
+  const waOn = OV?.channels?.waqr?.state === 'connected';
   const proposed = d.lessons.filter((l) => l.status === 'proposed');
   const active = d.lessons.filter((l) => l.status === 'active');
   main.innerHTML = `
-    <div class="page-head"><div class="grow"><h1>Обучение</h1><p class="muted">Учите бота своими словами. Чем больше настоящих ответов вы ему дадите, тем лучше он работает.</p></div></div>
+    <div class="page-head"><div class="grow"><h1>Обучение</h1><p class="muted">Бот учится на вашей переписке, на ваших исправлениях и на том, что вы ему говорите.</p></div></div>
+    ${studyCardHtml(st, igOn, waOn)}
     <div class="grid c2">
       <div class="card teach">
         <div class="row"><h2 class="grow" style="margin:0">Чат с ботом-учеником</h2><button class="btn sm" id="tClear">Очистить</button></div>
@@ -539,7 +643,7 @@ PAGES.learn = async () => {
         <div class="composer" style="padding:10px 0 0;border:0"><textarea id="tText" placeholder="Напишите боту… (Ctrl+Enter — отправить)"></textarea><button class="btn primary" id="tSend">Отправить</button></div>
       </div>
       <div>
-        ${proposed.length ? `<div class="card"><h2>Бот предлагает уроки <span class="tag gold">${proposed.length}</span></h2><p class="muted small">Из разбора переписки. Одобрите полезные — бот начнёт им следовать.</p>
+        ${proposed.length ? `<div class="card"><div class="row"><h2 class="grow" style="margin:0">Бот предлагает уроки <span class="tag gold">${proposed.length}</span></h2>${proposed.length > 1 ? '<button class="btn sm" id="okAll">Одобрить все</button>' : ''}</div><p class="muted small">Из вашей переписки и разбора дня. Одобрите полезные — бот начнёт им следовать. Проверьте цены и сроки: они могли устареть.</p>
           ${proposed.map((l) => `<div class="lesson"><div class="txt">${esc(l.text)}${l.why ? `<br><small class="muted">Почему: ${esc(l.why)}</small>` : ''}</div>
             <button class="btn sm primary" data-ok="${l.id}">Да</button><button class="btn sm" data-edit="${l.id}">✎</button><button class="btn sm danger" data-no="${l.id}">Нет</button></div>`).join('')}</div>` : ''}
         <div class="card"><h2>Вопросы клиентов без ответа ${d.questions.length ? `<span class="tag gold">${d.questions.length}</span>` : ''}</h2>
@@ -555,7 +659,9 @@ PAGES.learn = async () => {
       <div class="row" style="margin-bottom:8px"><input id="lNew" class="grow" placeholder="Новое правило, например: «Всегда уточняй, нужен ли номер с видом на Каабу»"><button class="btn primary" id="lAdd">Добавить</button></div>
       ${active.map((l) => `<div class="lesson"><div class="txt">${esc(l.text)}</div><span class="tag">${l.kind === 'example' ? 'пример' : l.kind === 'faq' ? 'вопрос-ответ' : 'правило'}</span><span class="tag">${SRC[l.source] || l.source}</span>
         <button class="btn sm" data-edit="${l.id}">✎</button><button class="btn sm danger" data-del="${l.id}">✕</button></div>`).join('') || '<p class="muted">Пока нет.</p>'}
-    </div>`;
+    </div>
+    ${styleCardHtml(st)}`;
+  bindStudy(st);
   const renderT = (h) => renderMessages(h.map((x, i) => ({ id: i, dir: x.who === 'owner' ? 'out' : 'in', author: x.who === 'owner' ? 'owner' : 'teacher', text: x.text, at: x.at })), $('#tMsgs'), { noFix: true });
   renderT(d.history);
   const sendT = () => busy($('#tSend'), async () => {
@@ -573,6 +679,11 @@ PAGES.learn = async () => {
   $('#tClear').onclick = async () => { await api('/api/teach/clear', {}); route(); };
   $('#lAdd').onclick = async () => { const t = $('#lNew').value.trim(); if (!t) return; await api('/api/lessons', { text: t }); toast('Урок добавлен'); route(); };
   $$('[data-ok]').forEach((b) => (b.onclick = async () => { await api(`/api/lessons/${b.dataset.ok}`, { status: 'active' }); refreshOverview(); route(); }));
+  $('#okAll') && ($('#okAll').onclick = async () => {
+    if (!confirm(`Одобрить все ${proposed.length} уроков? Проверьте, что в них нет устаревших цен.`)) return;
+    for (const l of proposed) await api(`/api/lessons/${l.id}`, { status: 'active' });
+    toast('Одобрено'); refreshOverview(); route();
+  });
   $$('[data-no]').forEach((b) => (b.onclick = async () => { await api(`/api/lessons/${b.dataset.no}`, { status: 'rejected' }); refreshOverview(); route(); }));
   $$('[data-del]').forEach((b) => (b.onclick = async () => { if (confirm('Удалить урок?')) { await api(`/api/lessons/${b.dataset.del}/delete`, {}); route(); } }));
   $$('[data-edit]').forEach((b) => (b.onclick = () => {
@@ -729,6 +840,7 @@ PAGES.connect = async () => {
         <div class="grow" style="min-width:260px">
           <ol style="margin-top:0"><li>Нажмите «Подключить».</li><li>На телефоне: WhatsApp Business → ⋮ или Настройки → <b>Связанные устройства</b> → <b>Привязать устройство</b>.</li><li>Наведите камеру на код слева.</li></ol>
           <p class="muted small">Телефон работает как обычно: вы видите все ответы бота и можете ответить сами — тогда бот замолчит в этом чате на ${c.behavior.ownerPauseHours} ч.</p>
+          <p class="small">📚 При подключении бот загрузит вашу переписку за последние ${c.study?.months || 12} мес. и изучит, как вы отвечаете клиентам${c.behavior.waitForStudy ? ' — пока изучает (обычно 5–20 минут), клиентам не отвечает' : ''}. Если телефон спросит, синхронизировать ли историю, — разрешите.</p>
           <div class="note">Это неофициальный способ (как WhatsApp Web через программу). WhatsApp может заблокировать номер за автоматизацию. Бот только отвечает на входящие и ничего не рассылает — это снижает риск, но не убирает его. Для полной безопасности — официальный способ ниже.</div>
           <div class="row" style="margin-top:10px">
             ${c.channels.waQr.enabled ? '<button class="btn" id="qrStop">Остановить</button><button class="btn danger" id="qrOut">Отвязать номер</button>' : '<button class="btn primary" id="qrStart">Подключить</button>'}
@@ -844,6 +956,10 @@ PAGES.settings = async () => {
         <div class="form-grid">${fieldHtml({ k: 'schedule.reviewHour', label: 'Во сколько разбирать день (час, 0–23)', type: 'number' }, c)}</div>
         ${fieldHtml({ k: 'behavior.autoApproveLessons', label: 'Применять уроки из разбора дня сразу, без моего одобрения', type: 'check', hint: 'Удобно, но бот может выучить лишнее. Рекомендуем сначала одобрять вручную.' }, c)}
         ${fieldHtml({ k: 'schedule.weeklyReport', label: 'Присылать отчёт за неделю по понедельникам', type: 'check' }, c)}
+        ${fieldHtml({ k: 'study.weekly', label: 'Раз в неделю доизучать мои новые ответы клиентам и уточнять мой стиль', type: 'check' }, c)}
+        ${fieldHtml({ k: 'behavior.waitForStudy', label: 'Пока бот изучает мою переписку — не отвечать клиентам (не дольше 30 минут)', type: 'check' }, c)}
+        <div class="form-grid">${fieldHtml({ k: 'study.months', label: 'Изучать переписку за последние (месяцев)', type: 'number' }, c)}</div>
+        ${fieldHtml({ k: 'study.importHistory', label: 'Загружать историю чатов при подключении WhatsApp по QR-коду', type: 'check' }, c)}
       </div>
       <div class="card"><h2>Панель</h2>
         ${fieldHtml({ k: 'panel.preventSleep', label: 'Не давать Mac засыпать, пока работает бот', type: 'check', hint: 'На Windows: Параметры → Система → Питание → «Переводить в спящий режим: Никогда»' }, c)}
