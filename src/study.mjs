@@ -87,8 +87,8 @@ export function parseInstagramJson(obj) {
   return { title: fixMojibake(obj.title || ''), messages, instagram: true };
 }
 
-/** Простое чтение .zip (без сторонних библиотек): возвращает файлы .txt и .json. */
-export function readZip(buf) {
+/** Простое чтение .zip (без сторонних библиотек): возвращает файлы, чьи имена подходят под want (по умолчанию .txt и .json). */
+export function readZip(buf, want = /\.(txt|json)$/i) {
   const out = [];
   let eocd = -1;
   for (let i = buf.length - 22; i >= Math.max(0, buf.length - 70000); i--) if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
@@ -102,7 +102,7 @@ export function readZip(buf) {
     const local = buf.readUInt32LE(p + 42);
     const name = buf.slice(p + 46, p + 46 + nlen).toString('utf8');
     p += 46 + nlen + xlen + clen;
-    if (!/\.(txt|json)$/i.test(name) || /__MACOSX/.test(name)) continue;
+    if (!want.test(name) || /__MACOSX/.test(name)) continue;
     if (buf.readUInt32LE(local) !== 0x04034b50) continue;
     const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
     const data = buf.slice(start, start + csize);

@@ -23,6 +23,7 @@ const { waCloudAdapter, instagramAdapter, refreshInstagramToken } = await import
 const tunnel = await import('./tunnel.mjs');
 const telegram = await import('./telegram.mjs');
 const { preloadVoice } = await import('./voice.mjs');
+const { resumeDocuments } = await import('./documents.mjs');
 
 loadConfig();
 openDb(paths.db);
@@ -62,6 +63,8 @@ tunnel.syncTunnel();
 telegram.syncTelegram().catch((e) => log('Telegram:', e));
 // модель распознавания голосовых загружаем заранее, чтобы первое голосовое клиента не ждало
 setTimeout(preloadVoice, 5000);
+// документы, которые не успели разобрать до перезапуска, — дочитываем
+setTimeout(resumeDocuments, 8000);
 
 // ---------- Mac не засыпает, пока Вакиль работает (иначе бот не ответит) ----------
 if (process.platform === 'darwin' && config().panel.preventSleep) {

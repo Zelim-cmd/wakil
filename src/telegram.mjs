@@ -11,7 +11,7 @@ import { get, all, run, update, kvGet, kvSet, addEvent } from './db.mjs';
 import { getContact, recentMessages, openRequest, setStage, contactLabel, STAGE_LABEL, CHANNEL_LABEL } from './store.mjs';
 
 // поздние импорты (чтобы не было круговых зависимостей при запуске)
-const lazy = { agent: () => import('./agent.mjs'), learning: () => import('./learning.mjs'), analytics: () => import('./analytics.mjs'), study: () => import('./study.mjs'), voice: () => import('./voice.mjs'), hub: () => import('./channels/hub.mjs') };
+const lazy = { documents: () => import('./documents.mjs'), agent: () => import('./agent.mjs'), learning: () => import('./learning.mjs'), analytics: () => import('./analytics.mjs'), study: () => import('./study.mjs'), voice: () => import('./voice.mjs'), hub: () => import('./channels/hub.mjs') };
 
 let api = null;                 // для проверок можно подменить
 let running = false, stopFlag = false, abort = null, offset = 0;
@@ -132,6 +132,7 @@ const HELP = `Я ваш помощник Вакиль. Что я умею:
 • ответьте (reply) на моё сообщение о клиенте — текст уйдёт клиенту;
 • пишите или говорите голосом: «запомни: в Рамадан минимум 5 ночей», «сколько броней за неделю?», «выключи бота»;
 • пришлите фото или текст прайса — разнесу по отелям;
+• пришлите документ (PDF, Word, Excel, текст) — прайс, условия, описание отелей, инструкцию: цены разнесу по отелям, остальное запомню. Подпись к файлу тоже прочитаю: «цены до 31 марта»;
 • пришлите файлы «Экспорт чата» из WhatsApp — изучу, как вы отвечаете клиентам.
 
 Команды:
@@ -275,32 +276,52 @@ export async function handleUpdate(u) {
       }
       return send('Не знаю такой команды. /help — что я умею.');
     }
-    // файлы экспорта чатов → изучение
-    if (m.document && /\.(txt|zip|json)$/i.test(m.document.file_name || '')) {
-      if ((m.document.file_size || 0) > 20 * 1024 * 1024) return send('Файл больше 20 МБ — Telegram не даёт его скачать. Сделайте экспорт «Без медиафайлов» или загрузите через панель.');
-      const study = await lazy.study();
-      const file = await download(m.document.file_id, path.extname(m.document.file_name));
-      const batch = 'tg' + Date.now();
-      study.stageUpload(batch, m.document.file_name, fs.readFileSync(file));
-      fs.rm(file, { force: true }, () => {});
-      const r = study.finishUpload(batch);
-      if (r.needOwner) return send(`В чате несколько авторов: ${r.authors.join(', ')}. Какое имя ваше? Напишите его в панели (Обучение → Загрузить экспорт) — или пришлите сразу несколько чатов, я пойму сам.`);
-      if (!r.ok) return send(r.error);
-      if (!r.chats) return send(r.tooOld ? `Переписка старше ${r.months} мес. — не беру (срок меняется в настройках).` : 'Этот чат уже был загружен.');
-      study.runStudy({ mode: 'full' }).catch(() => {});
-      return send(`📚 Принял: чатов ${r.chats}, сообщений ${r.messages}. Изучаю, как вы отвечаете, — пришлю итог.`);
-    }
     // фото (прайс, чек) → ассистенту с картинкой
-    if (m.photo || (m.document && /^image\//.test(m.document.mime_type || ''))) {
+    if (m.photo || (m.document && /^image\//.test(m.document.mime_type || '') && !/heic|heif/i.test(m.document.mime_type || ''))) {
       const id = m.photo ? m.photo[m.photo.length - 1].file_id : m.document.file_id;
       const file = await download(id, '.jpg');
       return ownerText(text || 'Посмотри на фото: если это прайс — разнеси цены по отелям; если что-то другое — скажи, что видишь.', { images: [{ path: file, mime: 'image/jpeg' }], replyTo: m.message_id });
+    }
+    if (m.document) {
+      const name = m.document.file_name || 'документ';
+      if ((m.document.file_size || 0) > 20 * 1024 * 1024) return send('Файл больше 20 МБ — Telegram не даёт боту его скачать. Загрузите его в панели: «Обучение → Документы для обучения».', { replyTo: m.message_id });
+      const isChat = /\.(zip|json)$/i.test(name);
+      const docs = await lazy.documents();
+      if (!isChat && !/\.txt$/i.test(name)) { const problem = docs.docProblem(name); if (problem) return send(problem, { replyTo: m.message_id }); }
+      const file = await download(m.document.file_id, path.extname(name));
+      const buf = fs.readFileSync(file);
+      fs.rm(file, { force: true }, () => {});
+      // экспорт чата (.txt из WhatsApp, .zip, .json из Instagram) → изучение стиля; остальное — документ
+      if (isChat || docs.looksLikeChat(name, buf)) return studyExport(name, buf);
+      return learnDocument(name, buf, text, m.message_id);
     }
     if (text) return ownerText(text, { replyTo: m.message_id });
   } catch (e) {
     log('Telegram: ошибка обработки —', e.message);
     await send(`⚠️ Не получилось: ${e.message}`).catch(() => {});
   }
+}
+
+async function learnDocument(name, buf, note, replyTo) {
+  const docs = await lazy.documents();
+  let r;
+  try { r = docs.addDocument({ name, buf, via: 'telegram', note }); } catch (e) { return send(`⚠️ ${e.message}`, { replyTo }); }
+  if (r.duplicate) return send(`Этот документ я уже читал:\n\n${docs.resultText(await r.done)}`, { replyTo });
+  await send(`📄 Читаю «${name}»… Обычно это 1–3 минуты.`, { replyTo });
+  const typing = setInterval(() => call('sendChatAction', { chat_id: owner(), action: 'typing' }).catch(() => {}), 5000);
+  try { return await send(docs.resultText(await r.done), { replyTo }); } finally { clearInterval(typing); }
+}
+
+async function studyExport(name, buf) {
+  const study = await lazy.study();
+  const batch = 'tg' + Date.now();
+  study.stageUpload(batch, name, buf);
+  const r = study.finishUpload(batch);
+  if (r.needOwner) return send(`В чате несколько авторов: ${r.authors.join(', ')}. Какое имя ваше? Напишите его в панели (Обучение → Загрузить экспорт) — или пришлите сразу несколько чатов, я пойму сам.`);
+  if (!r.ok) return send(r.error);
+  if (!r.chats) return send(r.tooOld ? `Переписка старше ${r.months} мес. — не беру (срок меняется в настройках).` : 'Этот чат уже был загружен.');
+  study.runStudy({ mode: 'full' }).catch(() => {});
+  return send(`📚 Принял: чатов ${r.chats}, сообщений ${r.messages}. Изучаю, как вы отвечаете, — пришлю итог.`);
 }
 
 async function onCallback(q) {

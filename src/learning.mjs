@@ -8,7 +8,7 @@
 import { config, patchConfig } from './config.mjs';
 import { get, all, run, insert, update, addEvent, kvGet, kvSet } from './db.mjs';
 import { ask } from './ai/providers.mjs';
-import { listHotels, findHotel, saveHotel, listKnowledge, CITY_LABEL } from './knowledge.mjs';
+import { listHotels, listKnowledge, mergeHotels, HOTEL_ITEM_SCHEMA, CITY_LABEL } from './knowledge.mjs';
 import { contactLabel, CHANNEL_LABEL } from './store.mjs';
 import { notifyOwner } from './notify.mjs';
 import { summaryText } from './analytics.mjs';
@@ -62,21 +62,7 @@ const TEACH_SCHEMA = {
   properties: {
     reply: { type: 'string', description: 'Ответ владельцу, по-русски, коротко' },
     lessons: { type: 'array', items: { type: 'object', properties: { kind: { type: 'string', enum: ['rule', 'faq'] }, text: { type: 'string' } }, required: ['kind', 'text'] } },
-    hotels: {
-      type: 'array',
-      description: 'Отели, которые нужно добавить или изменить. Поля, которые не меняются, — null.',
-      items: {
-        type: 'object',
-        properties: {
-          name: { type: 'string' }, city: { type: ['string', 'null'], description: 'makkah | madinah' }, stars: { type: ['integer', 'null'] },
-          distance: { type: ['string', 'null'] }, area: { type: ['string', 'null'] }, description: { type: ['string', 'null'] },
-          prices: { type: ['string', 'null'], description: 'Цены текстом, как в прайсе' }, prices_until: { type: ['string', 'null'], description: 'ГГГГ-ММ-ДД' },
-          private_note: { type: ['string', 'null'], description: 'Только для владельца: комиссия, контакты отеля' },
-          active: { type: ['boolean', 'null'] },
-        },
-        required: ['name', 'city', 'stars', 'distance', 'area', 'description', 'prices', 'prices_until', 'private_note', 'active'],
-      },
-    },
+    hotels: { type: 'array', description: 'Отели, которые нужно добавить или изменить. Поля, которые не меняются, — null.', items: HOTEL_ITEM_SCHEMA },
     answers: { type: 'array', items: { type: 'object', properties: { question_id: { type: 'integer' }, answer: { type: 'string' } }, required: ['question_id', 'answer'] } },
     retire_lessons: { type: 'array', items: { type: 'integer' }, description: 'Номера уроков, которые владелец просит отменить' },
     bot_enabled: { type: ['boolean', 'null'], description: 'true — владелец просит включить бота, false — выключить, null — не трогать' },
@@ -119,13 +105,7 @@ ${summaryText(30)}`;
   const d = r.data || {};
   const done = [];
   for (const l of d.lessons || []) if (addLesson({ kind: l.kind === 'faq' ? 'faq' : 'rule', text: l.text, source: 'teach' })) done.push(`запомнил: «${l.text}»`);
-  for (const h of d.hotels || []) {
-    if (!h?.name) continue;
-    const ex = findHotel(h.name);
-    const patch = Object.fromEntries(Object.entries(h).filter(([, v]) => v !== null && v !== undefined));
-    saveHotel(ex ? { ...patch, id: ex.id, name: ex.name } : patch);
-    done.push(`${ex ? 'обновил' : 'добавил'} отель ${ex ? ex.name : h.name}`);
-  }
+  for (const h of mergeHotels(d.hotels)) done.push(`${h.isNew ? 'добавил' : 'обновил'} отель ${h.name}`);
   for (const a of d.answers || []) {
     try { answerQuestion(a.question_id, a.answer); done.push(`ответ на вопрос №${a.question_id}`); } catch {}
   }

@@ -42,6 +42,7 @@ before(async () => {
     return true;
   });
   setMockAi(async (o) => {
+    if (o.purpose === 'document') return { ok: true, data: { title: 'Прайс Медина', summary: 'Прайс на Медину', knowledge: '- Трансфер из аэропорта Медины: 150 SAR.', hotels: [{ name: 'Dar Al Iman InterContinental', city: 'madinah', stars: 5, distance: '50 м', area: null, description: null, prices: 'Двухместный — 900 SAR/ночь', prices_until: '2027-03-31', private_note: null, active: null }], questions: ['Цены с завтраком?'] } };
     if (o.purpose === 'teach') return { ok: true, data: { reply: 'Запомнил: ' + o.prompt.split('Владелец: ').pop(), lessons: [{ kind: 'rule', text: o.prompt.split('Владелец: ').pop() }], hotels: [], answers: [], retire_lessons: [], bot_enabled: /выключи/i.test(o.prompt) ? false : null } };
     return { ok: true, data: typeof aiReply === 'function' ? aiReply(o) : aiReply || REPLY() };
   });
@@ -166,4 +167,27 @@ test('голосовые: чтение OGG/Opus (как в WhatsApp и Telegram)
   assert.ok(pcm.length > 16000 * 1.3 && pcm.length < 16000 * 1.7, `длина ${pcm.length}`);
   const rms = Math.sqrt(pcm.reduce((s, x) => s + x * x, 0) / pcm.length);
   assert.ok(rms > 0.1, 'звук не пустой');
+});
+
+test('документ в Telegram: прайс → отели и знания; экспорт чата .txt — в изучение стиля', async () => {
+  const { findHotel, listKnowledge } = await import('../src/knowledge.mjs');
+  const realFetch = globalThis.fetch;
+  let file = Buffer.from('Прайс Медина\nDar Al Iman InterContinental — двухместный 900 SAR, до 31.03.2027\nТрансфер из аэропорта: 150 SAR');
+  globalThis.fetch = async (url, o) => (String(url).includes('/file/bot') ? new Response(file) : realFetch(url, o));
+  try {
+    await tg.handleUpdate(msg({ document: { file_id: 'D1', file_name: 'прайс медина.txt', file_size: 200 }, caption: 'цены с завтраком' }));
+    assert.ok(sentTexts().some((t) => /^📄 Читаю «прайс медина\.txt»/.test(t)));
+    assert.match(lastSent().text, /Добавил отели: Dar Al Iman InterContinental/);
+    assert.match(lastSent().text, /❓ Цены с завтраком\?/);
+    assert.equal(findHotel('Dar Al Iman').prices_until, '2027-03-31');
+    assert.ok(listKnowledge().some((f) => /^Документ — Прайс Медина/.test(f.name)));
+    // формат, который не читаем, — подсказка, файл даже не скачиваем
+    await tg.handleUpdate(msg({ document: { file_id: 'D2', file_name: 'прайс.pages', file_size: 200 } }));
+    assert.match(lastSent().text, /PDF/);
+    // экспорт чата WhatsApp — как раньше, в изучение
+    file = Buffer.from(Array.from({ length: 8 }, (_, i) => `12.03.2026, 10:0${i} - ${i % 2 ? 'Ахмед' : 'Хасан'}: сообщение ${i}`).join('\n'));
+    await tg.handleUpdate(msg({ document: { file_id: 'D3', file_name: 'WhatsApp Chat with Ахмед.txt', file_size: 300 } }));
+    assert.doesNotMatch(lastSent().text, /Читаю/);
+    assert.match(lastSent().text, /Принял: чатов 1|несколько авторов/);
+  } finally { globalThis.fetch = realFetch; }
 });

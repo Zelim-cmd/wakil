@@ -18,7 +18,7 @@ fi
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
 NODE="$(command -v node || true)"
 [ -z "$NODE" ] && { echo "Не найден Node.js. Установите его с https://nodejs.org"; exit 1; }
-[ -d node_modules ] || npm install --no-audit --no-fund
+{ [ -d node_modules ] && node tools/check-deps.mjs >/dev/null 2>&1; } || npm install --no-audit --no-fund
 mkdir -p "$HOME/Library/LaunchAgents" data
 
 cat > "$PLIST" <<PL

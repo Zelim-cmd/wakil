@@ -14,6 +14,7 @@ export const paths = {
   waAuth: path.join(DATA, 'whatsapp-auth'),
   aiWork: path.join(DATA, 'ai-work'),
   models: path.join(DATA, 'models'),
+  docs: path.join(DATA, 'documents'),
   log: path.join(DATA, 'wakil.log'),
 };
 

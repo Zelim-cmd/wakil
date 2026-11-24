@@ -13,8 +13,15 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if not exist node_modules (
-  echo Первый запуск: устанавливаю нужные библиотеки, 1-2 минуты...
+rem первый запуск или после обновления добавились новые библиотеки
+set NEED=0
+if not exist node_modules set NEED=1
+if "%NEED%"=="0" (
+  node tools\check-deps.mjs >nul 2>nul
+  if errorlevel 1 set NEED=1
+)
+if "%NEED%"=="1" (
+  echo Устанавливаю нужные библиотеки, 1-2 минуты...
   call npm install --no-audit --no-fund
   if errorlevel 1 (
     echo Не получилось. Проверьте интернет и попробуйте снова.

@@ -594,6 +594,61 @@ function studyCardHtml(st, igOn, waOn) {
     </details>
   </div>`;
 }
+// ---------- документы для обучения ----------
+const fBytes = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1).replace('.', ',')} МБ` : `${Math.max(1, Math.round(n / 1024))} КБ`);
+function docItemHtml(d) {
+  const r = d.result || {};
+  const del = `<button class="btn sm danger" data-docdel="${d.id}" title="Удалить документ и его справку">✕</button>`;
+  const meta = `<small class="muted">${esc(d.name)} · ${fBytes(d.size)} · ${fTime(d.created_at)}${d.via === 'telegram' ? ' · из Telegram' : ''}</small>`;
+  if (d.status === 'reading') return `<div class="lesson doc"><div class="txt"><span class="spin"></span> <b>Читаю «${esc(d.name)}»…</b> <span class="muted small">обычно 1–3 минуты</span><br>${meta}</div></div>`;
+  if (d.status === 'error') return `<div class="lesson doc"><div class="txt"><b>⚠️ ${esc(d.name)}</b><br><span class="err small">${esc(d.error)}</span><br>${meta}</div>
+    <button class="btn sm" data-docretry="${d.id}">Ещё раз</button>${del}</div>`;
+  if (d.status === 'replaced') return `<div class="lesson doc"><div class="txt muted">↪️ <b>${esc(d.title || d.name)}</b> — заменён новой версией «${esc(r.replacedBy?.name || '')}», его справка убрана<br>${meta}</div>
+    <button class="btn sm" data-docretry="${d.id}" title="Если это не новая версия — прочитать заново и вернуть справку">↻</button>${del}</div>`;
+  const did = [];
+  if (r.hotelsAdded?.length) did.push(`добавлены отели: ${esc(r.hotelsAdded.join(', '))}`);
+  if (r.hotelsUpdated?.length) did.push(`обновлены отели: ${esc(r.hotelsUpdated.join(', '))}`);
+  if (d.knowledge_file) did.push(`справка в <a href="#knowledge" data-kfile="${esc(d.knowledge_file)}">«${esc(d.knowledge_file.replace(/\.md$/, ''))}»</a>`);
+  return `<div class="lesson doc"><div class="txt">✅ <b>${esc(d.title || d.name)}</b><br>${meta}
+    ${d.summary ? `<div class="small">${esc(d.summary)}</div>` : ''}
+    ${r.replaced?.length ? `<div class="small">Это новая версия: ${r.replaced.map((x) => `«${esc(x.title || x.name)}» (${esc(x.name)})`).join(', ')} — старая справка убрана.</div>` : ''}
+    <div class="small">${did.length ? 'Бот запомнил: ' + did.join('; ') + '.' : '<span class="muted">Полезного для клиентов в нём не нашлось.</span>'}${r.truncated ? ' <span class="muted">Документ очень большой — прочитано только начало.</span>' : ''}</div>
+    ${r.questions?.length ? `<div class="small"><b>Уточните</b> (ответьте в чате с ботом-учеником ниже или в Telegram):<br>${r.questions.map((q) => `❓ ${esc(q)}`).join('<br>')}</div>` : ''}
+  </div><button class="btn sm" data-docretry="${d.id}" title="Прочитать заново">↻</button>${del}</div>`;
+}
+function docsCardHtml(d) {
+  return `<div class="card" id="docCard" style="margin-bottom:14px">
+    <div class="row"><h2 class="grow" style="margin:0">📄 Документы для обучения</h2><label class="btn primary">📎 Загрузить документ<input type="file" id="docFiles" multiple accept="${esc(d.accept)}" hidden></label></div>
+    <p class="muted small">Прайсы, условия бронирования и оплаты, описания отелей, инструкции — <b>PDF, Word, Excel, текст или фото</b>. Бот прочитает: цены разнесёт по карточкам отелей, остальное запишет в «Отели и знания» (там можно поправить). Можно и из Telegram — просто пришлите файл своему помощнику.</p>
+    <div id="docList">${d.docs.map(docItemHtml).join('') || '<p class="muted small">Пока ни одного документа.</p>'}</div>
+  </div>`;
+}
+async function uploadDocs(files) {
+  for (const f of files) {
+    if (f.size > 50 * 1024 * 1024) { toast(`${f.name}: файл больше 50 МБ`, true); continue; }
+    const r = await fetch(`/api/docs/upload?name=${encodeURIComponent(f.name)}`, { method: 'POST', headers: { 'x-wakil': '1' }, body: f });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(j.error || 'Не загрузилось', true); continue; }
+    toast(j.duplicate ? `«${f.name}» уже загружен — показываю, что бот из него взял` : `«${f.name}» загружен — читаю`);
+  }
+  route();
+}
+function bindDocs(d) {
+  $('#docFiles').onchange = (e) => { const files = [...e.target.files]; e.target.value = ''; if (files.length) uploadDocs(files).catch((err) => toast(err.message, true)); };
+  $$('[data-docdel]').forEach((b) => (b.onclick = async () => {
+    if (!confirm('Удалить документ? Его справка в «Отели и знания» тоже удалится. Отели и цены, которые бот из него взял, останутся — их правьте в карточках отелей.')) return;
+    await api(`/api/docs/${b.dataset.docdel}/delete`, {}); route();
+  }));
+  $$('[data-docretry]').forEach((b) => (b.onclick = async () => { await api(`/api/docs/${b.dataset.docretry}/retry`, {}); toast('Читаю заново'); route(); }));
+  $$('[data-kfile]').forEach((a) => (a.onclick = () => { kbFile = a.dataset.kfile; }));
+  if (d.docs.some((x) => x.status === 'reading')) {
+    every(3000, async () => {
+      const n = await api('/api/docs');
+      if (!n.docs.some((x) => x.status === 'reading')) return route();
+      const el = $('#docList'); if (el) el.innerHTML = n.docs.map(docItemHtml).join('');
+    });
+  }
+}
 function styleCardHtml(d) {
   const p = d.profile;
   return `<div class="card" style="margin-top:14px"><h2>Ваш стиль — так бот пишет от вашего имени</h2>
@@ -627,7 +682,7 @@ function bindStudy(st) {
   }
 }
 PAGES.learn = async () => {
-  const [d, st] = await Promise.all([api('/api/learning'), api('/api/study')]);
+  const [d, st, docs] = await Promise.all([api('/api/learning'), api('/api/study'), api('/api/docs')]);
   await refreshOverview();
   const igOn = OV?.channels?.instagram?.state === 'connected';
   const waOn = OV?.channels?.waqr?.state === 'connected';
@@ -635,6 +690,7 @@ PAGES.learn = async () => {
   const active = d.lessons.filter((l) => l.status === 'active');
   main.innerHTML = `
     <div class="page-head"><div class="grow"><h1>Обучение</h1><p class="muted">Бот учится на вашей переписке, на ваших исправлениях и на том, что вы ему говорите.</p></div></div>
+    ${docsCardHtml(docs)}
     ${studyCardHtml(st, igOn, waOn)}
     <div class="grid c2">
       <div class="card teach">
@@ -663,6 +719,7 @@ PAGES.learn = async () => {
     </div>
     ${styleCardHtml(st)}`;
   bindStudy(st);
+  bindDocs(docs);
   const renderT = (h) => renderMessages(h.map((x, i) => ({ id: i, dir: x.who === 'owner' ? 'out' : 'in', author: x.who === 'owner' ? 'owner' : 'teacher', text: x.text, at: x.at })), $('#tMsgs'), { noFix: true });
   renderT(d.history);
   const sendT = () => busy($('#tSend'), async () => {
@@ -714,7 +771,7 @@ PAGES.knowledge = async () => {
   if (!kbFile || !files.find((f) => f.name === kbFile)) kbFile = files[0]?.name || null;
   const cur = files.find((f) => f.name === kbFile);
   main.innerHTML = `
-    <div class="page-head"><div class="grow"><h1>Отели и знания</h1><p class="muted">Бот отвечает только по тому, что здесь написано. Чего здесь нет — он не выдумывает, а зовёт вас.</p></div></div>
+    <div class="page-head"><div class="grow"><h1>Отели и знания</h1><p class="muted">Бот отвечает только по тому, что здесь написано. Чего здесь нет — он не выдумывает, а зовёт вас. Прайс или условия уже есть в PDF, Word или Excel? Загрузите файл в <a href="#learn">«Обучение → Документы»</a> — бот заполнит всё сам.</p></div></div>
     <div class="card"><div class="row"><h2 class="grow" style="margin:0">Отели и цены</h2><button class="btn primary" id="hNew">＋ Отель</button></div>
       <p class="muted small">Быстрее всего: откройте «Обучение» и вставьте прайс текстом — бот сам разнесёт его по карточкам. Если цены устарели (дата прошла), бот их не называет и зовёт вас.</p>
       ${hotels.length ? `<div class="table-wrap"><table><tr><th>Отель</th><th>Город</th><th>★</th><th>До Харама</th><th>Цены до</th><th></th></tr>

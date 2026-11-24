@@ -40,7 +40,8 @@ export function setMockAi(fn) { mock = fn; }
 
 /**
  * Спросить ИИ.
- * @param {{purpose:string, system:string, prompt:string, schema?:object, images?:{path:string,mime:string}[], smart?:boolean, timeoutMs?:number}} o
+ * @param {{purpose:string, system:string, prompt:string, schema?:object, images?:{path:string,mime:string}[], smart?:boolean, timeoutMs?:number, maxTokens?:number}} o
+ *   images: картинки, а для Claude — и PDF (mime application/pdf)
  * @returns {Promise<{ok:true, data?:any, text:string} | {ok:false, code:string, message:string}>}
  *   code: auth (не вошли / неверный ключ) | limit (кончился лимит подписки) | missing (программа не установлена) | timeout | format | error
  */
@@ -142,6 +143,15 @@ function classify(text) {
   return 'error';
 }
 
+/** Картинка или PDF целиком (PDF читают только Claude Code и API Anthropic — сканы, таблицы). */
+function claudeBlock(img) {
+  const data = fs.readFileSync(img.path).toString('base64');
+  if (img.mime === 'application/pdf') return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data } };
+  return { type: 'image', source: { type: 'base64', media_type: img.mime || 'image/jpeg', data } };
+}
+/** Может ли выбранный ИИ прочитать PDF сам (нужно для сканов без текста). */
+export function canReadPdf() { return mock ? true : ['claude-code', 'anthropic'].includes(config().ai.provider); }
+
 function workDir() { fs.mkdirSync(paths.aiWork, { recursive: true }); return paths.aiWork; }
 const tmpName = (ext) => path.join(workDir(), `${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`);
 
@@ -155,7 +165,7 @@ async function runClaude({ system, prompt, schema, images = [], model, timeoutMs
   fs.writeFileSync(sysFile, system);
   const content = [];
   for (const img of images) {
-    try { content.push({ type: 'image', source: { type: 'base64', media_type: img.mime || 'image/jpeg', data: fs.readFileSync(img.path).toString('base64') } }); } catch {}
+    try { content.push(claudeBlock(img)); } catch {}
   }
   content.push({ type: 'text', text: prompt });
   const input = JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n';
@@ -213,7 +223,7 @@ async function runCodex({ system, prompt, schema, images = [], model, timeoutMs 
     a.push('-c', 'web_search="disabled"');
     if (model) a.push('-m', model);
     if (schemaFile) a.push('--output-schema', schemaFile);
-    for (const img of images) a.push('-i', img.path);
+    for (const img of images) if (img.mime !== 'application/pdf') a.push('-i', img.path);
     a.push('-o', out, '-');
     return a;
   };
@@ -264,18 +274,18 @@ async function fetchJson(url, opts, timeoutMs) {
   return JSON.parse(body);
 }
 
-async function runAnthropic({ system, prompt, schema, images = [], model, cfg, preset, timeoutMs = 180000 }) {
+async function runAnthropic({ system, prompt, schema, images = [], model, cfg, preset, timeoutMs = 180000, maxTokens = 4096 }) {
   if (!cfg.apiKey) return { ok: false, code: 'auth', message: 'Нет ключа API' };
   const content = [];
   for (const img of images) {
-    try { content.push({ type: 'image', source: { type: 'base64', media_type: img.mime || 'image/jpeg', data: fs.readFileSync(img.path).toString('base64') } }); } catch {}
+    try { content.push(claudeBlock(img)); } catch {}
   }
   content.push({ type: 'text', text: prompt + (schema ? schemaHint(schema) : '') });
   try {
     const j = await fetchJson(`${(cfg.baseUrl || preset.baseUrl).replace(/\/+$/, '')}/v1/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model, max_tokens: 4096, system, messages: [{ role: 'user', content }] }),
+      body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content }] }),
     }, timeoutMs);
     const text = (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('');
     return { ok: true, text };
@@ -284,7 +294,8 @@ async function runAnthropic({ system, prompt, schema, images = [], model, cfg, p
   }
 }
 
-async function runOpenAI({ system, prompt, schema, images = [], model, cfg, preset, timeoutMs = 180000 }) {
+async function runOpenAI({ system, prompt, schema, images: allImages = [], model, cfg, preset, timeoutMs = 180000, maxTokens }) {
+  const images = allImages.filter((i) => i.mime !== 'application/pdf');
   const base = (cfg.baseUrl || preset.baseUrl || '').replace(/\/+$/, '');
   if (!base) return { ok: false, code: 'error', message: 'Не указан адрес сервиса' };
   if (!cfg.apiKey && !/localhost|127\.0\.0\.1/.test(base)) return { ok: false, code: 'auth', message: 'Нет ключа API' };

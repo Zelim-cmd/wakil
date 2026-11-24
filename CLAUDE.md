@@ -15,6 +15,7 @@
 - `src/tunnel.mjs` — сам запускает ngrok, если в настройках адрес ngrok.
 - `src/telegram.mjs` — Telegram-помощник владельца (getUpdates, без вебхука): привязка по `/start <bindCode>`, уведомления с кнопками (`notify`), reply на уведомление → `sendAsOwner`, голос/фото/файлы экспорта → `ownerChat`/изучение. Связь «сообщение Telegram → клиент/вопрос» — `kv tg_links`.
 - `src/voice.mjs` — голосовые → текст: `local` (Whisper через `@huggingface/transformers`, модель в `data/models`, OGG/Opus декодирует `ogg-opus-decoder`, язык определяется своим шагом — иначе библиотека переводит на английский), `groq`, `openai`. Для проверок — `setMockVoice`.
+- `src/documents.mjs` — документы для обучения (панель «Обучение → Документы», `/api/docs/*`; Telegram — любой файл, кроме экспорта чатов): PDF (`unpdf`; для Claude — PDF целиком блоком `document`, так он видит сканы и таблицы, до 30 страниц), .docx/.xlsx (свой разбор XML из zip), текст (UTF-8/UTF-16/cp1251), фото, на Mac ещё .doc/.rtf/.odt через `textutil`. ИИ (`DOC_SCHEMA`) → отели через `mergeHotels`, справка → файл знаний «Документ — …», вопросы владельцу; `replaces` — новая версия убирает справку старых. Оригиналы — `data/documents`, таблица `documents`. Итог пишется в историю чата-учителя, чтобы ответ владельца на вопросы был понятен.
 - `src/notify.mjs` — уведомления: Telegram в первую очередь, WhatsApp — если выбрано или Telegram не сработал.
 - `web/` — панель без сборки: `index.html`, `app.js`, `style.css`.
 - `data/` — всё бизнеса (база, настройки с секретами, вход в WhatsApp, знания). **Не в git.**
@@ -29,4 +30,5 @@
 ## Проверка после правок
 
 - `npm test` — проверки с подменённым ИИ (без подписки и без WhatsApp).
+- Новая библиотека в `dependencies` — лаунчеры доставят её сами (`tools/check-deps.mjs`).
 - Живая проверка: `WAKIL_DATA=/tmp/wakil-try node src/main.mjs`, затем страница «Проверить бота» в панели.

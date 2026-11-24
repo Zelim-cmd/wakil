@@ -64,6 +64,33 @@ export function saveHotel(h) {
   return insert('hotels', row);
 }
 
+/** Отель в ответе ИИ (чат-учитель, документы). Поля, которые не меняются, — null. */
+export const HOTEL_ITEM_SCHEMA = {
+  type: 'object',
+  properties: {
+    name: { type: 'string' }, city: { type: ['string', 'null'], description: 'makkah | madinah' }, stars: { type: ['integer', 'null'] },
+    distance: { type: ['string', 'null'] }, area: { type: ['string', 'null'] }, description: { type: ['string', 'null'] },
+    prices: { type: ['string', 'null'], description: 'Цены текстом, как в прайсе' }, prices_until: { type: ['string', 'null'], description: 'ГГГГ-ММ-ДД' },
+    private_note: { type: ['string', 'null'], description: 'Только для владельца: комиссия, контакты отеля' },
+    active: { type: ['boolean', 'null'] },
+  },
+  required: ['name', 'city', 'stars', 'distance', 'area', 'description', 'prices', 'prices_until', 'private_note', 'active'],
+};
+
+/** Добавить или обновить отели из ответа ИИ: знакомые — дополняем (null не трогает поле), новые — добавляем. */
+export function mergeHotels(list) {
+  const out = [];
+  for (const h of list || []) {
+    if (!h?.name) continue;
+    const ex = findHotel(h.name);
+    const patch = Object.fromEntries(Object.entries(h).filter(([, v]) => v !== null && v !== undefined));
+    if (patch.prices_until && !/^\d{4}-\d{2}-\d{2}$/.test(patch.prices_until)) delete patch.prices_until;
+    saveHotel(ex ? { ...patch, id: ex.id, name: ex.name } : patch);
+    out.push({ name: ex ? ex.name : h.name, isNew: !ex });
+  }
+  return out;
+}
+
 /** Название отеля для сравнения: без регистра, значков над буквами (ô → o), слов «отель/hotel» и знаков. */
 export function hotelKey(name) {
   return String(name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()

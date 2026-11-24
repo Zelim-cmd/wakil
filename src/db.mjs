@@ -92,6 +92,13 @@ CREATE TABLE IF NOT EXISTS ai_calls (
   id INTEGER PRIMARY KEY, at INTEGER NOT NULL, purpose TEXT, provider TEXT, model TEXT, ms INTEGER, ok INTEGER, error TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS documents (            -- документы для обучения: прайсы, условия, инструкции
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, file TEXT DEFAULT '', size INTEGER DEFAULT 0, sha TEXT DEFAULT '',
+  via TEXT DEFAULT 'panel', note TEXT DEFAULT '',
+  status TEXT DEFAULT 'reading',                  -- reading | done | error
+  title TEXT DEFAULT '', summary TEXT DEFAULT '', knowledge_file TEXT DEFAULT '', result TEXT DEFAULT '{}', error TEXT DEFAULT '',
+  created_at INTEGER NOT NULL, done_at INTEGER
+);
 `;
 
 export function openDb(file) {

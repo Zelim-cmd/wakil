@@ -12,8 +12,9 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ ! -d node_modules ]; then
-  echo "Первый запуск: устанавливаю нужные библиотеки (1–2 минуты)…"
+# первый запуск или после обновления добавились новые библиотеки
+if [ ! -d node_modules ] || ! node tools/check-deps.mjs >/dev/null 2>&1; then
+  echo "Устанавливаю нужные библиотеки (1–2 минуты)…"
   npm install --no-audit --no-fund || { echo "Не получилось. Проверьте интернет и попробуйте снова."; read -r -p "Enter…"; exit 1; }
 fi
 

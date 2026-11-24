@@ -24,6 +24,7 @@ import {
 } from './learning.mjs';
 import { stats, analyst, exportCsv, EXPORT_NAMES } from './analytics.mjs';
 import { stageUpload, finishUpload, runStudy, studyStatus, saveProfile, deleteExample, fetchInstagramHistory } from './study.mjs';
+import { addDocument, listDocuments, deleteDocument, processDocument, DOC_ACCEPT, MAX_DOC_BYTES } from './documents.mjs';
 
 const WEB = path.join(ROOT, 'web');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ogg': 'audio/ogg', '.mp4': 'video/mp4' };
@@ -217,6 +218,18 @@ route('POST', '/api/study/run', (q, p, b) => {
 });
 route('POST', '/api/study/profile', (q, p, b) => { saveProfile(b.text); return { ok: true }; });
 route('POST', '/api/study/examples/:i/delete', (q, p) => { deleteExample(Number(p.i)); return { ok: true }; });
+// документы для обучения: прайсы, условия, инструкции
+route('GET', '/api/docs', () => ({ docs: listDocuments(), accept: DOC_ACCEPT }));
+route('POST', '/api/docs/upload', (q, p, raw) => {
+  const name = String(q.get('name') || 'документ');
+  try {
+    const r = addDocument({ name, buf: raw, via: 'panel' });
+    r.done.catch(() => {});
+    return { ok: true, id: r.id, duplicate: !!r.duplicate };
+  } catch (e) { throw httpError(400, `${name}: ${e.message}`); }
+}, { raw: true, limit: MAX_DOC_BYTES + 1024 * 1024 });
+route('POST', '/api/docs/:id/retry', (q, p) => { processDocument(Number(p.id)).catch(() => {}); return { ok: true }; });
+route('POST', '/api/docs/:id/delete', (q, p) => { deleteDocument(Number(p.id)); return { ok: true }; });
 route('POST', '/api/study/instagram', async () => {
   const r = await fetchInstagramHistory();
   if (!r.ok) throw httpError(400, r.error);
