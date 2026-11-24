@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Вакиль — ИИ-консультант</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230f766e'/><path d='M8 22V12l8-5 8 5v10' fill='none' stroke='white' stroke-width='2.4' stroke-linejoin='round'/><rect x='13' y='15' width='6' height='7' fill='white'/></svg>">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="login" class="login hidden">
+  <form id="loginForm" class="card">
+    <h1>Вакиль</h1>
+    <p class="muted">Введите пароль панели</p>
+    <input type="password" id="loginPw" autocomplete="current-password" required>
+    <button class="btn primary" type="submit">Войти</button>
+    <p id="loginErr" class="err"></p>
+  </form>
+</div>
+<div id="app" class="app">
+  <nav class="side">
+    <div class="brand"><span class="logo">🕋</span><div><b id="brandName">Вакиль</b><small id="brandSub">ИИ-консультант</small></div></div>
+    <a href="#home" data-page="home">🏠 <span>Сводка</span><i class="badge" id="b-home"></i></a>
+    <a href="#chats" data-page="chats">💬 <span>Диалоги</span><i class="badge" id="b-chats"></i></a>
+    <a href="#bookings" data-page="bookings">🧾 <span>Брони и оплаты</span><i class="badge" id="b-bookings"></i></a>
+    <a href="#stats" data-page="stats">📊 <span>Аналитика</span></a>
+    <a href="#learn" data-page="learn">🎓 <span>Обучение</span><i class="badge" id="b-learn"></i></a>
+    <a href="#knowledge" data-page="knowledge">🏨 <span>Отели и знания</span></a>
+    <a href="#test" data-page="test">🧪 <span>Проверить бота</span></a>
+    <a href="#connect" data-page="connect">🔌 <span>Подключения</span></a>
+    <a href="#settings" data-page="settings">⚙️ <span>Настройки</span></a>
+    <div class="side-foot">
+      <label class="switch" title="Главный выключатель: бот отвечает клиентам">
+        <input type="checkbox" id="botSwitch"><span></span> <b id="botSwitchText">Бот включён</b>
+      </label>
+    </div>
+  </nav>
+  <main id="main"></main>
+</div>
+<div id="modal" class="modal hidden"><div class="modal-box"><button class="modal-x" data-close>×</button><div id="modalBody"></div></div></div>
+<div id="toast" class="toast hidden"></div>
+<script src="/app.js"></script>
+</body>
+</html>

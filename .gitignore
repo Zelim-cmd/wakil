@@ -1,0 +1,6 @@
+# Данные бизнеса: клиенты, переписка, пароли, вход в WhatsApp. Никогда не выкладывать.
+data/
+node_modules/
+.DS_Store
+Thumbs.db
+*.log

@@ -1,0 +1,20 @@
+{
+  "name": "wakil",
+  "version": "1.0.0",
+  "description": "Вакиль — ИИ-консультант по отелям Мекки и Медины для WhatsApp и Instagram: отвечает клиентам, учится у владельца, ведёт аналитику. Работает на подписке Claude или ChatGPT.",
+  "type": "module",
+  "main": "src/main.mjs",
+  "scripts": {
+    "start": "node src/main.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "baileys": "7.0.0-rc14",
+    "pino": "^10.4.0",
+    "qrcode": "^1.5.4"
+  },
+  "license": "MIT"
+}
