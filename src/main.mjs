@@ -21,6 +21,8 @@ const { summaryText } = await import('./analytics.mjs');
 const { notifyOwner } = await import('./notify.mjs');
 const { waCloudAdapter, instagramAdapter, refreshInstagramToken } = await import('./channels/meta.mjs');
 const tunnel = await import('./tunnel.mjs');
+const telegram = await import('./telegram.mjs');
+const { preloadVoice } = await import('./voice.mjs');
 
 loadConfig();
 openDb(paths.db);
@@ -49,7 +51,7 @@ async function syncWaQr() {
   }
 }
 await syncWaQr();
-onConfigChange(() => { syncWaQr(); tunnel.syncTunnel(); });
+onConfigChange(() => { syncWaQr(); tunnel.syncTunnel(); telegram.syncTelegram().catch((e) => log('Telegram:', e)); });
 if (!config().channels.waQr.enabled) {
   // чтобы панель показывала «выключен», даже пока модуль не загружен
   hub.register('waqr', { send: async () => ({ ok: false, error: 'WhatsApp (QR) выключен' }), status: () => ({ state: 'off' }) });
@@ -57,6 +59,9 @@ if (!config().channels.waQr.enabled) {
 
 startServers();
 tunnel.syncTunnel();
+telegram.syncTelegram().catch((e) => log('Telegram:', e));
+// модель распознавания голосовых загружаем заранее, чтобы первое голосовое клиента не ждало
+setTimeout(preloadVoice, 5000);
 
 // ---------- Mac не засыпает, пока Вакиль работает (иначе бот не ответит) ----------
 if (process.platform === 'darwin' && config().panel.preventSleep) {
@@ -107,6 +112,7 @@ async function shutdown() {
   log('Вакиль останавливается…');
   try { await waqr?.stop(); } catch {}
   try { tunnel.stop(); } catch {}
+  try { telegram.stopTelegram(); } catch {}
   try { closeDb(); } catch {}
   process.exit(0);
 }

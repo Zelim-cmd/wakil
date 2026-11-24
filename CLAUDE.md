@@ -13,6 +13,9 @@
 - `src/analytics.mjs` — `stats(days)`, `summaryText`, ИИ-аналитик, выгрузка CSV.
 - `src/web.mjs` — панель (порт 8790, только localhost, если не включён доступ из сети с паролем) и вебхуки (порт 8791, только `/webhook/*`). Все POST панели требуют заголовок `X-Wakil: 1`.
 - `src/tunnel.mjs` — сам запускает ngrok, если в настройках адрес ngrok.
+- `src/telegram.mjs` — Telegram-помощник владельца (getUpdates, без вебхука): привязка по `/start <bindCode>`, уведомления с кнопками (`notify`), reply на уведомление → `sendAsOwner`, голос/фото/файлы экспорта → `ownerChat`/изучение. Связь «сообщение Telegram → клиент/вопрос» — `kv tg_links`.
+- `src/voice.mjs` — голосовые → текст: `local` (Whisper через `@huggingface/transformers`, модель в `data/models`, OGG/Opus декодирует `ogg-opus-decoder`, язык определяется своим шагом — иначе библиотека переводит на английский), `groq`, `openai`. Для проверок — `setMockVoice`.
+- `src/notify.mjs` — уведомления: Telegram в первую очередь, WhatsApp — если выбрано или Telegram не сработал.
 - `web/` — панель без сборки: `index.html`, `app.js`, `style.css`.
 - `data/` — всё бизнеса (база, настройки с секретами, вход в WhatsApp, знания). **Не в git.**
 

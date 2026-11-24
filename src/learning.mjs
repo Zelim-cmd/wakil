@@ -5,7 +5,7 @@
 //  4) Учитель — чат с ботом в панели или со своего личного WhatsApp: «запомни…», «вот новый прайс…».
 //  5) Ежедневный разбор — бот сам перечитывает переписку за день, находит ошибки и предлагает уроки.
 //     Владелец одобряет (или включает «одобрять самому»).
-import { config } from './config.mjs';
+import { config, patchConfig } from './config.mjs';
 import { get, all, run, insert, update, addEvent, kvGet, kvSet } from './db.mjs';
 import { ask } from './ai/providers.mjs';
 import { listHotels, findHotel, saveHotel, listKnowledge, CITY_LABEL } from './knowledge.mjs';
@@ -79,11 +79,12 @@ const TEACH_SCHEMA = {
     },
     answers: { type: 'array', items: { type: 'object', properties: { question_id: { type: 'integer' }, answer: { type: 'string' } }, required: ['question_id', 'answer'] } },
     retire_lessons: { type: 'array', items: { type: 'integer' }, description: 'Номера уроков, которые владелец просит отменить' },
+    bot_enabled: { type: ['boolean', 'null'], description: 'true — владелец просит включить бота, false — выключить, null — не трогать' },
   },
-  required: ['reply', 'lessons', 'hotels', 'answers', 'retire_lessons'],
+  required: ['reply', 'lessons', 'hotels', 'answers', 'retire_lessons', 'bot_enabled'],
 };
 
-export async function ownerChat(text, { via = 'panel' } = {}) {
+export async function ownerChat(text, { via = 'panel', images = [] } = {}) {
   const history = kvGet('teach_history', []);
   const lessons = all("SELECT id, kind, text FROM lessons WHERE status = 'active' AND kind != 'example' ORDER BY id");
   const questions = all("SELECT id, text FROM questions WHERE status = 'open' ORDER BY id DESC LIMIT 30");
@@ -95,7 +96,9 @@ export async function ownerChat(text, { via = 'panel' } = {}) {
 - Ответить на вопросы клиентов, которые ты не знал → answers (question_id из списка ниже).
 - Отменить урок → retire_lessons.
 - Ответить на вопрос о делах по сводке ниже.
-В lessons, hotels и answers записывай ТОЛЬКО то, что владелец сказал прямо, — без своих выводов и догадок (даты праздников, курсы, условия). Закрывай вопрос клиента (answers), только если владелец действительно на него ответил. Если чего-то не хватает — спроси в reply. Если владелец просит что-то, чего ты не умеешь (например, написать клиенту), скажи, где это сделать в панели. Ответ — по-русски, коротко.${via === 'whatsapp' ? ' Это переписка в WhatsApp: без форматирования, коротко.' : ''}
+- Выключить или включить ответы клиентам → bot_enabled (сейчас бот ${config().behavior.botEnabled ? 'включён' : 'выключен'}).
+- Если владелец прислал фото — посмотри на него: прайс разнеси по отелям (hotels), чек или что-то другое — опиши, что видишь.
+В lessons, hotels и answers записывай ТОЛЬКО то, что владелец сказал прямо, — без своих выводов и догадок (даты праздников, курсы, условия). Закрывай вопрос клиента (answers), только если владелец действительно на него ответил. Если чего-то не хватает — спроси в reply. Если владелец просит что-то, чего ты не умеешь (например, написать клиенту), скажи, где это сделать в панели. Ответ — по-русски, коротко.${via === 'whatsapp' || via === 'telegram' ? ' Это переписка в мессенджере: без форматирования и звёздочек, коротко.' : ''}
 
 ТЕКУЩИЕ УРОКИ (номер: текст):
 ${lessons.map((l) => `${l.id}: ${l.text}`).join('\n') || '(нет)'}
@@ -111,7 +114,7 @@ ${questions.map((q) => `${q.id}: ${q.text}`).join('\n') || '(нет)'}
 СВОДКА ЗА 30 ДНЕЙ:
 ${summaryText(30)}`;
   const prompt = [...history.slice(-8).map((h) => `${h.who === 'owner' ? 'Владелец' : 'Ты'}: ${h.text}`), `Владелец: ${text}`].join('\n\n');
-  const r = await ask({ purpose: 'teach', system, prompt, schema: TEACH_SCHEMA, smart: true });
+  const r = await ask({ purpose: 'teach', system, prompt, schema: TEACH_SCHEMA, smart: true, images });
   if (!r.ok) return { ok: false, reply: `Не получилось: ${r.message}` };
   const d = r.data || {};
   const done = [];
@@ -127,6 +130,10 @@ ${summaryText(30)}`;
     try { answerQuestion(a.question_id, a.answer); done.push(`ответ на вопрос №${a.question_id}`); } catch {}
   }
   for (const id of d.retire_lessons || []) { run("UPDATE lessons SET status = 'rejected' WHERE id = ?", id); done.push(`отменил урок №${id}`); }
+  if (typeof d.bot_enabled === 'boolean' && d.bot_enabled !== config().behavior.botEnabled) {
+    patchConfig({ behavior: { botEnabled: d.bot_enabled } });
+    done.push(d.bot_enabled ? 'включил бота' : 'выключил бота');
+  }
   const reply = String(d.reply || 'Готово.').trim();
   kvSet('teach_history', [...history, { who: 'owner', text, at: Date.now() }, { who: 'bot', text: reply, at: Date.now() }].slice(-30));
   if (done.length) addEvent('teach', null, { done });

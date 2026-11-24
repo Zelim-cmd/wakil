@@ -309,20 +309,6 @@ async function runOpenAI({ system, prompt, schema, images = [], model, cfg, pres
   }
 }
 
-/** Расшифровка голосового сообщения (по желанию, нужен ключ OpenAI). Возвращает текст или ''. */
-export async function transcribe(filePath, mime) {
-  const key = config().ai.transcribeKey;
-  if (!key) return '';
-  try {
-    const fd = new FormData();
-    fd.append('model', 'whisper-1');
-    fd.append('file', new Blob([fs.readFileSync(filePath)], { type: mime || 'audio/ogg' }), path.basename(filePath));
-    const r = await fetch('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { authorization: `Bearer ${key}` }, body: fd, signal: AbortSignal.timeout(120000) });
-    if (!r.ok) { log('Расшифровка голосового:', r.status, (await r.text()).slice(0, 200)); return ''; }
-    return String((await r.json()).text || '').trim();
-  } catch (e) { log('Расшифровка голосового:', e.message); return ''; }
-}
-
 /** Проверка подключения из панели. */
 export async function testAi() {
   const r = await ask({

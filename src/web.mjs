@@ -13,6 +13,8 @@ import * as waqr from './channels/wa-qr.mjs';
 import { signatureOk, verifyChallenge, onWhatsAppWebhook, onInstagramWebhook } from './channels/meta.mjs';
 import { PRESETS, testAi } from './ai/providers.mjs';
 import { tunnelStatus } from './tunnel.mjs';
+import { telegramStatus, unbindTelegram, syncTelegram } from './telegram.mjs';
+import { voiceStatus, VOICE_ENGINES, LOCAL_MODELS, preloadVoice } from './voice.mjs';
 import { sendAsOwner, think } from './agent.mjs';
 import { getContact, recentMessages, openRequest, setStage, deleteContact, STAGES, STAGE_LABEL, CHANNEL_LABEL } from './store.mjs';
 import { listHotels, saveHotel, listKnowledge, saveKnowledge, deleteKnowledge } from './knowledge.mjs';
@@ -72,6 +74,8 @@ route('GET', '/api/overview', () => {
     ai: { provider: cfg.ai.provider, name: PRESETS[cfg.ai.provider]?.name || cfg.ai.provider, model: cfg.ai.model },
     channels: hub.statuses(),
     tunnel: tunnelStatus(),
+    telegram: telegramStatus(),
+    voice: voiceStatus(),
     counts: {
       attention: get("SELECT COUNT(*) n FROM contacts WHERE attention = 1 AND channel != 'test'").n,
       claimed: get("SELECT COUNT(*) n FROM payments p LEFT JOIN contacts c ON c.id = p.contact_id WHERE p.status = 'claimed' AND (c.channel IS NULL OR c.channel != 'test')").n,
@@ -85,6 +89,7 @@ route('GET', '/api/overview', () => {
     events: all("SELECT * FROM events WHERE type IN ('notify','ai_limit','send_error') ORDER BY id DESC LIMIT 40").map((e) => ({ ...e, data: JSON.parse(e.data || '{}') })),
     lastReview: kvGet('last_review', null),
     aiLast: get('SELECT ok, error, at FROM ai_calls ORDER BY id DESC LIMIT 1') || null,
+    telegramBound: !!cfg.telegram?.ownerChatId,
     ownerPhoneSet: String(cfg.business.ownerPhone || '').replace(/\D/g, '').length >= 7,
     tested: !!get("SELECT id FROM contacts WHERE channel = 'test' LIMIT 1") || !!get("SELECT id FROM ai_calls WHERE purpose = 'reply' AND ok = 1 LIMIT 1"),
     currency: cfg.business.currency,
@@ -284,7 +289,7 @@ route('GET', '/api/export/:name', (q, p, b, res) => {
 // настройки и подключения
 route('GET', '/api/settings', () => ({
   config: publicConfig(), presets: PRESETS, stages: STAGES.map((s) => ({ key: s, label: STAGE_LABEL[s] })), channelLabels: CHANNEL_LABEL,
-  lan: lanAddresses(), platform: process.platform,
+  lan: lanAddresses(), platform: process.platform, voiceEngines: VOICE_ENGINES, voiceModels: LOCAL_MODELS,
 }));
 route('POST', '/api/settings', (q, p, b) => {
   const patch = stripMasked(b || {});
@@ -293,6 +298,9 @@ route('POST', '/api/settings', (q, p, b) => {
   return { ok: true, config: publicConfig() };
 });
 route('POST', '/api/ai/test', async () => testAi());
+route('POST', '/api/telegram/unbind', () => { unbindTelegram(); return { ok: true }; });
+route('POST', '/api/telegram/retry', async () => { await syncTelegram(); return telegramStatus(); });
+route('POST', '/api/voice/preload', () => { preloadVoice(); return voiceStatus(); });
 route('POST', '/api/waqr/start', async () => { patchConfig({ channels: { waQr: { enabled: true } } }); return { ok: true }; });
 route('POST', '/api/waqr/stop', async () => { patchConfig({ channels: { waQr: { enabled: false } } }); return { ok: true }; });
 route('POST', '/api/waqr/logout', async () => { await waqr.logout(); patchConfig({ channels: { waQr: { enabled: false } } }); return { ok: true }; });

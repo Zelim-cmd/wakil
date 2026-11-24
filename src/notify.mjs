@@ -1,7 +1,10 @@
-// Уведомления владельцу: в панель (всегда), на личный WhatsApp и/или в Telegram (если настроено).
+// Уведомления владельцу: в панель (всегда), в Telegram-помощника (главный путь) и/или на личный WhatsApp.
+//  WhatsApp-уведомления уходят С НОМЕРА БОТА на личный номер владельца: при QR-подключении — всегда можно,
+//  при официальном — только если владелец сам писал на номер бота за последние 24 часа. Поэтому главный путь — Telegram.
 import { config, log } from './config.mjs';
 import { addEvent } from './db.mjs';
 import { sendToOwnerPhone } from './channels/hub.mjs';
+import { notify as tgNotify, telegramReady } from './telegram.mjs';
 
 export const digits = (s) => String(s || '').replace(/\D/g, '');
 
@@ -10,20 +13,14 @@ export function panelLink(contactId) {
   return contactId ? `http://localhost:${p}/#chat/${contactId}` : `http://localhost:${p}/`;
 }
 
-/** type: handoff | payment | ai_error | review | report | info */
-export async function notifyOwner(type, text, contactId = null) {
+/** type: handoff | payment | ai_error | review | study | report | info. extra: { paymentId, photo } */
+export async function notifyOwner(type, text, contactId = null, extra = {}) {
   addEvent('notify', contactId, { kind: type, text });
   const cfg = config();
-  const tasks = [];
-  if (cfg.notify.whatsappOwner && digits(cfg.business.ownerPhone)) {
-    tasks.push(sendToOwnerPhone(digits(cfg.business.ownerPhone), text).then((r) => { if (!r.ok) log('Не удалось написать владельцу в WhatsApp'); }));
+  const viaTg = telegramReady() ? await tgNotify(type, text, contactId, extra) : false;
+  // в WhatsApp — если владелец так выбрал, или если Telegram не подключён / не сработал
+  if ((cfg.notify.whatsappOwner || !viaTg) && digits(cfg.business.ownerPhone)) {
+    const r = await sendToOwnerPhone(digits(cfg.business.ownerPhone), text);
+    if (!r.ok && !viaTg) log('Уведомление владельцу не доставлено: ни Telegram, ни WhatsApp не подключены');
   }
-  if (cfg.notify.telegramToken && cfg.notify.telegramChatId) {
-    tasks.push(fetch(`https://api.telegram.org/bot${cfg.notify.telegramToken}/sendMessage`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ chat_id: cfg.notify.telegramChatId, text: text.slice(0, 4000), disable_web_page_preview: true }),
-      signal: AbortSignal.timeout(20000),
-    }).then((r) => { if (!r.ok) log('Telegram: не удалось отправить уведомление', r.status); }).catch((e) => log('Telegram:', e.message)));
-  }
-  await Promise.all(tasks);
 }

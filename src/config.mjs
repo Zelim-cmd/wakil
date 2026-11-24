@@ -13,6 +13,7 @@ export const paths = {
   media: path.join(DATA, 'media'),
   waAuth: path.join(DATA, 'whatsapp-auth'),
   aiWork: path.join(DATA, 'ai-work'),
+  models: path.join(DATA, 'models'),
   log: path.join(DATA, 'wakil.log'),
 };
 
@@ -51,7 +52,6 @@ export function defaults() {
       baseUrl: '',
       claudePath: '',           // путь к claude, если его не видно (обычно не нужен)
       codexPath: '',
-      transcribeKey: '',        // ключ OpenAI для расшифровки голосовых (по желанию)
       concurrency: 2,
     },
     channels: {
@@ -59,7 +59,10 @@ export function defaults() {
       waCloud: { enabled: false, phoneNumberId: '', token: '', appSecret: '', verifyToken: rand(), apiVersion: 'v23.0' },
       instagram: { enabled: false, igUserId: '', token: '', appSecret: '', verifyToken: rand(), apiVersion: 'v23.0', tokenRefreshedAt: 0 },
     },
-    notify: { whatsappOwner: true, telegramToken: '', telegramChatId: '' },
+    notify: { whatsappOwner: false },   // дублировать уведомления на личный WhatsApp (с номера бота)
+    telegram: { token: '', ownerChatId: '', ownerName: '', botUsername: '', bindCode: crypto.randomBytes(5).toString('hex') },
+    voice: { engine: 'local', model: 'onnx-community/whisper-small', apiKey: '',
+      languages: ['ru', 'ar', 'en', 'tr', 'kk', 'uz', 'ky', 'tt', 'az', 'tg', 'fr', 'de', 'id', 'ms', 'ur', 'fa', 'uk'] },
     panel: { port: 8790, webhookPort: 8791, allowLan: false, password: '', preventSleep: true, publicUrl: '', autoTunnel: true },
     schedule: { reviewHour: 23, weeklyReport: true },
     study: { months: 12, maxChars: 300000, importHistory: true, weekly: true },
@@ -102,7 +105,7 @@ export function patchConfig(patch) { saveConfig(merge(config(), patch)); return 
 export function onConfigChange(fn) { listeners.add(fn); }
 
 // Секреты в панель не отдаём: только «задан / не задан» и последние 4 знака.
-const SECRET = /^(token|apiKey|appSecret|password|telegramToken|transcribeKey)$/;
+const SECRET = /^(token|apiKey|appSecret|password)$/;
 export function publicConfig(c = config()) {
   const walk = (o) => {
     if (!o || typeof o !== 'object' || Array.isArray(o)) return o;

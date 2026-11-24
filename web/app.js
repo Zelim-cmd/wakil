@@ -153,7 +153,7 @@ PAGES.home = async () => {
     [o.knowledgeFilled, 'Расскажите боту о компании, оплате и частых вопросах', '#knowledge'],
     [o.counts.hotels > 0, 'Добавьте отели и цены (можно просто вставить прайс в «Обучение»)', '#knowledge'],
     [o.tested, 'Поговорите с ботом как клиент и поправьте ответы', '#test'],
-    [o.ownerPhoneSet, 'Укажите свой личный номер — туда придут уведомления', '#settings'],
+    [o.telegramBound, 'Подключите Telegram-помощника: уведомления, ответы клиентам и управление ботом с телефона', '#connect'],
     [wa, 'Подключите WhatsApp — бот загрузит вашу прошлую переписку', '#connect'],
     [o.study?.last && !o.study.last.empty, o.study?.running ? `Бот изучает, как вы пишете клиентам… ${o.study.done}/${o.study.total}` : 'Бот изучает, как вы пишете клиентам, и пишет так же', '#learn'],
     [ch.instagram?.state === 'connected', 'Подключите Instagram (по желанию)', '#connect'],
@@ -803,6 +803,28 @@ PAGES.test = async () => {
 };
 
 // ======================= ПОДКЛЮЧЕНИЯ =======================
+function voiceLine(v) {
+  if (!v || v.engine === 'off') return '<span class="dot off"></span> выключено';
+  if (v.ready) return '<span class="dot on"></span> бот понимает голосовые';
+  if (v.loading) return '<span class="spin"></span> загружаю модель распознавания… (первый раз несколько минут)';
+  if (v.error) return `<span class="dot bad"></span> ${esc(v.error)}`;
+  return '<span class="dot wait"></span> модель загрузится при первом голосовом';
+}
+function tgBlock(t, c) {
+  if (!c.telegram?.token) return `<ol>
+      <li>В Telegram откройте <a href="https://t.me/BotFather" target="_blank"><b>@BotFather</b></a> → нажмите «Start» → отправьте <code>/newbot</code>.</li>
+      <li>Придумайте имя (например, «Помощник Умра-Сервис») и адрес бота, который заканчивается на <code>bot</code>.</li>
+      <li>BotFather пришлёт <b>токен</b> — длинную строку вида <code>123456:ABC-DEF…</code>. Скопируйте её сюда:</li></ol>
+    <div class="row"><input id="tgToken" class="grow" placeholder="123456789:AAH…" autocomplete="off"><button class="btn primary" id="tgSave">Подключить</button></div>`;
+  if (t.state === 'error') return `<p><span class="dot bad"></span> ${esc(t.error)}</p>
+    <div class="row"><input id="tgToken" class="grow" placeholder="Новый токен от @BotFather" autocomplete="off"><button class="btn primary" id="tgSave">Сохранить</button><button class="btn danger" id="tgOff">Отключить</button></div>`;
+  if (!t.bound) return `<p><span class="dot wait"></span> Бот @${esc(t.bot)} подключён. Осталось одно: откройте ссылку на телефоне и нажмите <b>«Start»</b> (или «Запустить»):</p>
+    <p><a class="btn primary" href="${esc(t.link)}" target="_blank">Открыть @${esc(t.bot)} в Telegram</a></p>
+    <p class="muted small">Ссылка с секретным кодом: привязаться может только тот, у кого она есть. Остальным бот ничего не ответит.</p>`;
+  return `<p><span class="dot on"></span> Работает: @${esc(t.bot)} пишет ${esc(t.ownerName || 'вам')}.</p>
+    <p class="small">Команды в боте: /status, /chats, /learn, /report, /pause, /resume, /study, /help — или просто пишите и говорите голосом.</p>
+    <div class="row"><button class="btn" id="tgUnbind">Отвязать мой Telegram</button><button class="btn danger" id="tgOff">Отключить помощника</button></div>`;
+}
 PAGES.connect = async () => {
   const s = await api('/api/settings');
   await refreshOverview();
@@ -828,9 +850,13 @@ PAGES.connect = async () => {
       <details style="margin-top:10px"><summary class="muted">Дополнительно</summary><div class="form-grid" style="margin-top:8px">
         ${fieldHtml({ k: 'ai.claudePath', label: 'Путь к программе claude (если не находится сама)' }, c)}${fieldHtml({ k: 'ai.codexPath', label: 'Путь к программе codex' }, c)}
         ${fieldHtml({ k: 'ai.concurrency', label: 'Сколько клиентов обрабатывать одновременно', type: 'number' }, c)}
-        ${fieldHtml({ k: 'ai.transcribeKey', label: 'Ключ OpenAI для расшифровки голосовых (по желанию)', type: 'password', hint: 'Без ключа бот видит, что пришло голосовое, но не слышит его. Расшифровка стоит копейки: около 0,6 цента за минуту.' }, c)}
       </div></details>
       <div class="row" style="margin-top:10px"><button class="btn primary" id="aiSave">Сохранить</button><button class="btn" id="aiTest">Проверить связь</button><span id="aiRes"></span></div>
+    </div>
+
+    <div class="card" id="tgCard"><h2>✈️ Telegram — ваш личный помощник</h2>
+      <p class="muted">Сюда бот присылает важное: клиент готов бронировать, сообщил об оплате, бот не знает ответа, отчёты. Под каждым — кнопки. Ответьте (reply) на сообщение о клиенте — и ваш ответ уйдёт клиенту в WhatsApp/Instagram. Там же учите и настраиваете бота: текстом, <b>голосом</b>, фото прайса, файлами экспорта чатов.</p>
+      ${tgBlock(OV.telegram, c)}
     </div>
 
     <div class="card"><h2>🟢 WhatsApp — по QR-коду <small class="muted">быстрый способ</small></h2>
@@ -884,11 +910,22 @@ PAGES.connect = async () => {
       <button class="btn primary" data-save="igCard">Сохранить</button>
     </div>
 
-    <div class="card" id="ntCard"><h2>🔔 Уведомления вам</h2>
-      <p class="muted">Когда клиент готов бронировать, сообщил об оплате или бот не знает ответа — Вакиль пишет вам.</p>
-      ${fieldHtml({ k: 'business.ownerPhone', label: 'Ваш личный номер WhatsApp (с кодом страны, только цифры)', ph: '79991234567', hint: 'Не номер бота! Со своего номера вы также можете писать боту: «запомни…», «вот прайс…», «как дела за неделю?»' }, c)}
-      ${fieldHtml({ k: 'notify.whatsappOwner', label: 'Присылать уведомления в WhatsApp', type: 'check' }, c)}
-      <div class="form-grid">${fieldHtml({ k: 'notify.telegramToken', label: 'Telegram: токен бота (по желанию)', type: 'password', hint: 'Создать бота: @BotFather в Telegram' }, c)}${fieldHtml({ k: 'notify.telegramChatId', label: 'Telegram: ваш chat id', hint: 'Узнать: напишите боту @userinfobot' }, c)}</div>
+    <div class="card" id="voiceCard"><h2>🎤 Голосовые сообщения</h2>
+      <p>${voiceLine(OV.voice)}</p>
+      <p class="muted small">Бот расшифровывает голосовые клиентов (и ваши — в Telegram) и отвечает на них как на текст. Язык определяет сам: русский, арабский, английский, турецкий, казахский, узбекский и другие. <b>Чеченского языка</b> в системе распознавания нет — такие голосовые бот попросит написать текстом и позовёт вас.</p>
+      <div class="form-grid">
+        ${fieldHtml({ k: 'voice.engine', label: 'Где расшифровывать', type: 'select', options: Object.entries(s.voiceEngines) }, c)}
+        ${c.voice?.engine === 'local' ? fieldHtml({ k: 'voice.model', label: 'Модель', type: 'select', options: Object.entries(s.voiceModels) }, c) : ''}
+        ${c.voice?.engine === 'groq' || c.voice?.engine === 'openai' ? fieldHtml({ k: 'voice.apiKey', label: 'Ключ', type: 'password', hint: c.voice.engine === 'groq' ? 'Бесплатно: зарегистрируйтесь на <a href="https://console.groq.com/keys" target="_blank">console.groq.com</a> → API Keys' : '<a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com/api-keys</a>' }, c) : ''}
+      </div>
+      <p class="muted small">${c.voice?.engine === 'local' ? 'На этом компьютере: бесплатно, голос никуда не отправляется. Первый раз скачивается модель (≈250 МБ), потом 10 секунд речи расшифровываются за 2–5 секунд.' : c.voice?.engine === 'groq' ? 'Groq: точнее и быстрее, бесплатного лимита хватает на сотни голосовых в день. Голос отправляется в Groq.' : ''}</p>
+      <button class="btn primary" data-save="voiceCard">Сохранить</button>
+    </div>
+
+    <div class="card" id="ntCard"><h2>🔔 Уведомления в WhatsApp (запасной путь)</h2>
+      <p class="muted">Если Telegram не подключён, уведомления придут на ваш личный WhatsApp — <b>с номера бота</b> (того WhatsApp, который подключён к Вакилю). При официальном подключении WhatsApp разрешает это, только если вы сами писали на номер бота за последние 24 часа, — поэтому лучше Telegram.</p>
+      ${fieldHtml({ k: 'business.ownerPhone', label: 'Ваш личный номер WhatsApp (с кодом страны, только цифры)', ph: '79991234567', hint: 'Не номер бота! С этого номера вы тоже можете писать боту: «запомни…», «вот прайс…» — в том числе голосом.' }, c)}
+      ${fieldHtml({ k: 'notify.whatsappOwner', label: 'Дублировать уведомления в WhatsApp, даже когда Telegram подключён', type: 'check' }, c)}
       <button class="btn primary" data-save="ntCard">Сохранить</button>
     </div>`;
   const saveCard = (id) => async () => { await api('/api/settings', collect($('#' + id))); toast('Сохранено'); route(); };
@@ -906,7 +943,13 @@ PAGES.connect = async () => {
     refreshOverview();
   });
   $('#pubSave').onclick = saveCard('pubCard');
+  $('#tgSave') && ($('#tgSave').onclick = () => busy($('#tgSave'), async () => { await api('/api/settings', { telegram: { token: $('#tgToken').value.trim() } }); await new Promise((r) => setTimeout(r, 1500)); route(); }));
+  $('#tgUnbind') && ($('#tgUnbind').onclick = async () => { if (confirm('Отвязать ваш Telegram? Уведомления перестанут приходить туда, пока не привяжете снова.')) { await api('/api/telegram/unbind', {}); route(); } });
+  $('#tgOff') && ($('#tgOff').onclick = async () => { if (confirm('Отключить Telegram-помощника?')) { await api('/api/settings', { telegram: { token: '', ownerChatId: '' } }); route(); } });
+  if (OV.telegram?.state === 'connected' && !OV.telegram.bound) every(3000, async () => { await refreshOverview(); if (OV.telegram?.bound) route(); });
+  if (OV.voice?.loading) every(4000, async () => { await refreshOverview(); const el = $('#voiceCard p'); if (el) el.innerHTML = voiceLine(OV.voice); });
   $$('[data-save]').forEach((b) => (b.onclick = saveCard(b.dataset.save)));
+  $('[data-k="voice.engine"]').onchange = saveCard('voiceCard');
   $('#qrStart') && ($('#qrStart').onclick = async () => { await api('/api/waqr/start', {}); toast('Запускаю… QR-код появится через несколько секунд'); setTimeout(PAGES.connect, 2500); });
   $('#qrStop') && ($('#qrStop').onclick = async () => { await api('/api/waqr/stop', {}); route(); });
   $('#qrOut') && ($('#qrOut').onclick = async () => { if (confirm('Отвязать WhatsApp от бота? Чтобы подключить снова, понадобится новый QR-код.')) { await api('/api/waqr/logout', {}); route(); } });

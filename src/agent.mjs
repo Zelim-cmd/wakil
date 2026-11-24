@@ -1,12 +1,13 @@
 // Бот-консультант: входящее сообщение → подождать, пока клиент допишет → ИИ → ответ + разбор для аналитики.
 import { config, log } from './config.mjs';
 import { get, update, insert, addEvent } from './db.mjs';
-import { ask, transcribe } from './ai/providers.mjs';
+import { ask } from './ai/providers.mjs';
+import { transcribeAny } from './voice.mjs';
 import * as hub from './channels/hub.mjs';
 import { knowledgeText, hotelsText } from './knowledge.mjs';
 import { lessonsForPrompt, ownerChat } from './learning.mjs';
 import { styleForPrompt, isStudying } from './study.mjs';
-import { notifyOwner, panelLink, digits } from './notify.mjs';
+import { notifyOwner, digits } from './notify.mjs';
 import {
   upsertContact, getContact, addMessage, recentMessages, setStage, applyFacts, contactLabel,
   STAGES, STAGE_LABEL, CHANNEL_LABEL,
@@ -103,7 +104,8 @@ export function buildSystem() {
 9. Когда данных достаточно — предложи 2–3 подходящих отеля из списка ниже с ценами (только если цены актуальны) и коротко, чем они отличаются.
 10. Позови менеджера (handoff.needed = true), когда: клиент готов бронировать или платить; просит реквизиты; хочет скидку или особые условия; недоволен или жалуется; просит живого человека; нужен ответ, которого нет в знаниях и без него не продолжить; большая группа или что-то срочное. Клиенту напиши, что передал вопрос менеджеру и он скоро ответит${b.workHours ? ` (менеджер на связи: ${b.workHours})` : ''}.
 11. Если клиент пишет, что оплатил, или прислал чек — поблагодари, скажи, что менеджер проверит поступление и пришлёт подтверждение, и заполни payment_claim.
-12. Если отвечать не нужно (клиент написал «спасибо», «ок» в конце разговора) — можно коротко ответить или вернуть пустой reply.
+12. Голосовые сообщения клиента приходят тебе расшифрованными («[голосовое] текст»); расшифровка бывает неточной — понимай по смыслу (например, «храм» — это Харам). Если пришло «[голосовое]» без текста — его не удалось расшифровать: извинись, попроси коротко написать текстом и позови менеджера (handoff), чтобы он прослушал.
+12а. Если отвечать не нужно (клиент написал «спасибо», «ок» в конце разговора) — можно коротко ответить или вернуть пустой reply.
 13. В переписке могут быть ответы менеджера (живого человека). Не противоречь им и продолжай в том же духе.
 14. Сам написать клиенту позже ты не можешь. Если обещаешь «уточню и напишу» — обязательно handoff.needed = true, чтобы это сделал владелец.
 15. Если владелец обычно пишет несколькими короткими сообщениями подряд — сделай так же: раздели reply на отдельные сообщения строкой --- (не больше 4 сообщений).
@@ -189,7 +191,10 @@ export async function handleInbound(msg) {
   const owner = digits(cfg.business.ownerPhone);
   if (owner && msg.channel !== 'test' && msg.channel !== 'instagram' && digits(msg.phone || msg.chatId).endsWith(owner.slice(-10)) && owner.length >= 7) {
     if (Date.now() - at > 10 * 60000) return;
-    const r = await ownerChat(msg.text || '', { via: 'whatsapp' });
+    let ownerText = msg.text || '';
+    if (msg.media?.kind === 'audio' && msg.media.path) { const t = await transcribeAny(msg.media.path, msg.media.mime); ownerText = t.ok ? t.text : ''; }
+    if (!ownerText) return;
+    const r = await ownerChat(ownerText, { via: 'whatsapp', images: msg.media?.kind === 'image' && msg.media.path ? [{ path: msg.media.path, mime: 'image/jpeg' }] : [] });
     const sent = await hub.send(msg.channel, msg.chatId, r.reply);
     rememberEcho(msg.channel, msg.chatId, r.reply, sent.extIds);
     return;
@@ -199,8 +204,8 @@ export async function handleInbound(msg) {
   if (c.imported) { update('contacts', c.id, { imported: 0 }); c = getContact(c.id); }
   let text = msg.text || '';
   if (msg.media?.kind === 'audio' && msg.media.path) {
-    const t = await transcribe(msg.media.path, msg.media.mime);
-    text = t ? `(голосовое, расшифровка) ${t}` : text;
+    const t = await transcribeAny(msg.media.path, msg.media.mime);
+    if (t.ok && t.text) text = [text, t.text].filter(Boolean).join('\n');
   }
   const id = addMessage({ contactId: c.id, dir: 'in', author: 'client', text, mediaKind: msg.media?.kind || '', mediaPath: msg.media?.path || '', at, extId: msg.extId });
   if (!id) return; // повтор
@@ -303,11 +308,11 @@ function applyAnalysis(c, out, pending) {
     if (!recent) {
       const img = [...pending].reverse().find((m) => m.media_kind === 'image');
       const booking = get("SELECT id FROM bookings WHERE contact_id = ? AND status IN ('pending','confirmed') ORDER BY id DESC LIMIT 1", c.id);
-      insert('payments', {
+      const paymentId = insert('payments', {
         contact_id: c.id, booking_id: booking?.id ?? null, amount: Number(out.payment_claim.amount) || 0,
         currency: out.payment_claim.currency || config().business.currency, at: Date.now(), status: 'claimed', media_path: img?.media_path || '',
       });
-      notifyOwner('payment', `💰 Клиент сообщил об оплате${out.payment_claim.amount ? `: ${out.payment_claim.amount} ${out.payment_claim.currency || ''}` : ''}\n${contactLabel(c)} (${CHANNEL_LABEL[c.channel]})\nПроверьте поступление и подтвердите в панели: ${panelLink(c.id)}`, c.id);
+      notifyOwner('payment', `💰 Клиент сообщил об оплате${out.payment_claim.amount ? `: ${out.payment_claim.amount} ${out.payment_claim.currency || ''}` : ''}\n${contactLabel(c)} (${CHANNEL_LABEL[c.channel]}${c.phone ? ', +' + c.phone : ''})\nПроверьте поступление.`, c.id, { paymentId, photo: img?.media_path || '' });
     }
   }
   if (out.handoff?.needed) {
@@ -318,7 +323,7 @@ function applyAnalysis(c, out, pending) {
       update('contacts', c.id, { attention: 1, attention_reason: reason });
       if (isTest) return;
       addEvent('handoff', c.id, { reason, urgency: out.handoff.urgency });
-      notifyOwner('handoff', `${out.handoff.urgency === 'high' ? '🔴' : '🔔'} ${reason}\nКлиент: ${contactLabel(fresh)} (${CHANNEL_LABEL[c.channel]}${fresh.phone ? ', +' + fresh.phone : ''})\n${out.summary || ''}\nОткрыть: ${panelLink(c.id)}`, c.id);
+      notifyOwner('handoff', `${out.handoff.urgency === 'high' ? '🔴' : '🔔'} ${reason}\nКлиент: ${contactLabel(fresh)} (${CHANNEL_LABEL[c.channel]}${fresh.phone ? ', +' + fresh.phone : ''})\n${out.summary || ''}`, c.id);
     }
   }
 }
@@ -333,7 +338,7 @@ async function onAiFailure(c, r) {
     await sendBot(c, cfg.behavior.fallbackText);
   }
   const why = { limit: 'закончился лимит подписки ИИ', auth: 'ИИ не подключён (нужно войти в аккаунт)', missing: 'программа ИИ не установлена', timeout: 'ИИ долго не отвечал' }[r.code] || 'ошибка ИИ';
-  notifyOwner('ai_error', `⚠️ Бот не смог ответить клиенту: ${why}.\nКлиент: ${contactLabel(c)}\nОтветьте сами: ${panelLink(c.id)}`, c.id);
+  notifyOwner('ai_error', `⚠️ Бот не смог ответить клиенту: ${why}.\nКлиент: ${contactLabel(c)} — ответьте сами.`, c.id);
 }
 
 /** Отправить ответ бота клиенту: если ИИ разделил ответ строкой ---, это несколько сообщений подряд, как пишет владелец. */
