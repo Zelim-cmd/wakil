@@ -985,6 +985,7 @@ PAGES.settings = async () => {
       </div>
       <div class="card"><h2>Как отвечает бот</h2>
         ${fieldHtml({ k: 'behavior.botEnabled', label: 'Бот отвечает клиентам', type: 'check' }, c)}
+        ${fieldHtml({ k: 'behavior.testPhones', label: 'Номера для проверки', ph: '79281234567, 79997654321', hint: 'Пока бот выключен, он отвечает только этим номерам WhatsApp — так можно проверить его в настоящем WhatsApp, не трогая клиентов.' }, c)}
         ${fieldHtml({ k: 'behavior.pricing', label: 'Цены', type: 'select', options: [['list', 'Называть цены из прайса, если они актуальны'], ['owner', 'Цены называю только я — бот собирает запрос и зовёт меня']] }, c)}
         ${fieldHtml({ k: 'behavior.style', label: 'Стиль общения', type: 'textarea', rows: 3 }, c)}
         ${fieldHtml({ k: 'behavior.fallbackText', label: 'Если ИИ недоступен, клиенту уйдёт', type: 'textarea', rows: 2, hint: 'Один раз, и вам сразу придёт уведомление. Пусто — ничего не отправлять.' }, c)}

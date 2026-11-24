@@ -269,3 +269,15 @@ test('проверочный чат отвечает, даже когда бот
   assert.deepEqual(sent.slice(n).map((s) => s.channel), ['test'], 'настоящему клиенту не ответил, в проверке — ответил');
   patchConfig({ behavior: { botEnabled: true } });
 });
+
+test('номера для проверки: бот выключен, но им отвечает', async () => {
+  patchConfig({ behavior: { botEnabled: false, testPhones: '+7 928 777-66-55, +7 999 000 11 22' } });
+  aiReply = base({ reply: 'Ответ проверяющему' });
+  const n = sent.length;
+  hub.inbound({ channel: 'waqr', chatId: '79287776655@s.whatsapp.net', phone: '79287776655', text: 'Проверка', extId: 'tp1', at: Date.now() });
+  hub.inbound({ channel: 'waqr', chatId: '79281112200@s.whatsapp.net', phone: '79281112200', text: 'Настоящий клиент', extId: 'tp2', at: Date.now() });
+  await until(() => sent.length > n);
+  await sleep(200);
+  assert.deepEqual(sent.slice(n).map((s) => s.chatId), ['79287776655@s.whatsapp.net']);
+  patchConfig({ behavior: { botEnabled: true, testPhones: '' } });
+});

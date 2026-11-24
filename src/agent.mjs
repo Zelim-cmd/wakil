@@ -240,7 +240,10 @@ function scheduleAnalyze(contactId, ms = 5 * 60000) {
 export function botActiveFor(c) {
   const cfg = config();
   // проверочный чат в панели работает и при выключенном боте — чтобы проверять, не отвечая настоящим клиентам
-  return (cfg.behavior.botEnabled || c.channel === 'test') && c.mode !== 'owner' && !(c.paused_until > Date.now());
+  // номера для проверки: бот отвечает им, даже когда выключен для остальных клиентов
+  const testers = String(cfg.behavior.testPhones || '').split(/[,;\n]+/).map(digits).filter((d) => d.length >= 7);
+  const isTester = !!c.phone && testers.some((t) => digits(c.phone).endsWith(t.slice(-10)));
+  return (cfg.behavior.botEnabled || c.channel === 'test' || isTester) && c.mode !== 'owner' && !(c.paused_until > Date.now());
 }
 
 /** Подумать и ответить клиенту (или только разобрать переписку для аналитики). */
