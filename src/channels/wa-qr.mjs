@@ -82,7 +82,9 @@ export async function start() {
     if (u.connection === 'close') {
       const code = u.lastDisconnect?.error?.output?.statusCode;
       const msg = u.lastDisconnect?.error?.message || '';
-      if (msg && msg !== lastError) log(`WhatsApp (QR): соединение закрыто — ${msg}${code ? ` (код ${code})` : ''}`);
+      // QR-код никто не отсканировал и он сменился (408) — это обычное ожидание, не ошибка
+      const qrExpired = sawQr && code === DisconnectReason.timedOut;
+      if (msg && msg !== lastError && !qrExpired) log(`WhatsApp (QR): соединение закрыто — ${msg}${code ? ` (код ${code})` : ''}`);
       lastError = msg;
       if (sock === s) sock = null;
       // WhatsApp не принял такой вариант «устройства» ещё до QR-кода — пробуем следующий
